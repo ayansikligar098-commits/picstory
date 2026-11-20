@@ -23,6 +23,8 @@
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
     <string name="search_users">Search people…</string>
+    <string name="search_username">Search username</string>
+    <string name="search_hint">Type a username to search for people</string>
     <string name="no_users_found">No one matches that search.</string>
     <string name="empty_feed">Follow people to see their photos — try Explore.</string>
     <string name="empty_explore">No photos yet — be the first to post one.</string>

@@ -117,7 +117,7 @@
             android:visibility="gone" />
     </LinearLayout>
 
-    <!-- Explore tab: photo grid + full user list (no search bar) -->
+    <!-- Explore tab: user search only (search box + results, nothing by default) -->
     <LinearLayout
         android:id="@+id/tabExplore"
         android:layout_width="match_parent"
@@ -125,6 +125,19 @@
         android:layout_weight="1"
         android:orientation="vertical"
         android:visibility="gone">
+
+        <EditText
+            android:id="@+id/etSearch"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_margin="12dp"
+            android:background="@drawable/edit_bg"
+            android:hint="@string/search_username"
+            android:inputType="text"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:textColor="@color/textPrimary"
+            android:textColorHint="@color/textSecondary" />
 
         <ListView
             android:id="@+id/lvUsers"
@@ -140,27 +153,7 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:padding="24dp"
-            android:text="@string/no_users_found"
-            android:textColor="@color/textSecondary"
-            android:textSize="15sp"
-            android:visibility="gone" />
-
-        <GridView
-            android:id="@+id/gvExplore"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:horizontalSpacing="2dp"
-            android:numColumns="3"
-            android:stretchMode="columnWidth"
-            android:verticalSpacing="2dp" />
-
-        <TextView
-            android:id="@+id/tvEmptyExplore"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:gravity="center"
-            android:padding="32dp"
-            android:text="@string/empty_explore"
+            android:text="@string/search_hint"
             android:textColor="@color/textSecondary"
             android:textSize="15sp"
             android:visibility="gone" />
@@ -223,7 +216,9 @@
                     android:layout_width="40dp"
                     android:layout_height="40dp"
                     android:background="@android:color/transparent"
+                    android:clickable="false"
                     android:contentDescription="Messages"
+                    android:focusable="false"
                     android:scaleType="centerInside"
                     android:src="@drawable/ic_nav_send" />
 
@@ -233,6 +228,7 @@
                     android:layout_height="12dp"
                     android:layout_gravity="top|end"
                     android:background="@drawable/dot_red"
+                    android:clickable="false"
                     android:visibility="gone" />
             </FrameLayout>
         </FrameLayout>

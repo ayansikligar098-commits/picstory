@@ -6,12 +6,14 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
 import android.widget.Button
-import android.widget.GridView
+import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -21,7 +23,7 @@ import org.json.JSONObject
 
 /**
  * Home screen: bottom nav Home / Explore / Create / Profile.
- * Home = stories row + feed. Explore = search + grid. Create = chooser.
+ * Home = stories row + feed. Explore = user search only.
  * Profile = own profile (shared ProfileController).
  */
 class HomeActivity : Activity() {
@@ -32,10 +34,9 @@ class HomeActivity : Activity() {
     private lateinit var tvEmptyFeed: TextView
     private lateinit var tvStatus: TextView
     private lateinit var storyRow: LinearLayout
+    private lateinit var etSearch: EditText
     private lateinit var lvUsers: ListView
     private lateinit var tvNoUsers: TextView
-    private lateinit var gvExplore: GridView
-    private lateinit var tvEmptyExplore: TextView
     private lateinit var btnRefresh: Button
     private lateinit var vUnreadDot: View
     private lateinit var navProfileAvatar: TextView
@@ -43,12 +44,14 @@ class HomeActivity : Activity() {
 
     private var storyGroups: List<StoryGroup> = emptyList()
     private var feed: List<Post> = emptyList()
-    private var explorePosts: List<Post> = emptyList()
     private var searchResults: List<User> = emptyList()
     private var currentTab = 0
     private var profileController: ProfileController? = null
     private var lastBackPress = 0L
     private val likeBusyIds = mutableSetOf<Int>()
+    // Search debounce (400ms after the last keystroke).
+    private val searchHandler = Handler(Looper.getMainLooper())
+    private var searchRunnable: Runnable? = null
     // Unread-DM polling (refreshes the red dot on the Messages icon).
     private val unreadHandler = Handler(Looper.getMainLooper())
     private var unreadRunnable: Runnable? = null
@@ -171,16 +174,26 @@ class HomeActivity : Activity() {
         tvEmptyFeed = findViewById(R.id.tvEmptyFeed)
         tvStatus = findViewById(R.id.tvStatus)
         storyRow = findViewById(R.id.storyRow)
+        etSearch = findViewById(R.id.etSearch)
         lvUsers = findViewById(R.id.lvUsers)
         tvNoUsers = findViewById(R.id.tvNoUsers)
-        gvExplore = findViewById(R.id.gvExplore)
-        tvEmptyExplore = findViewById(R.id.tvEmptyExplore)
         btnRefresh = findViewById(R.id.btnRefresh)
         vUnreadDot = findViewById(R.id.vUnreadDot)
 
         lvFeed.adapter = feedAdapter
         lvUsers.adapter = userAdapter
-        gvExplore.adapter = PostGridAdapter(this, explorePosts)
+
+        etSearch.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                searchRunnable?.let { searchHandler.removeCallbacks(it) }
+                val q = s?.toString()?.trim() ?: ""
+                val r = Runnable { searchUsers(q) }
+                searchRunnable = r
+                searchHandler.postDelayed(r, 400)
+            }
+        })
 
         findViewById<ImageButton>(R.id.navHome).setOnClickListener { showTab(0) }
         findViewById<ImageButton>(R.id.navExplore).setOnClickListener { showTab(1) }
@@ -199,7 +212,6 @@ class HomeActivity : Activity() {
             startActivity(Intent(this, ProfileActivity::class.java)
                 .putExtra("user_id", searchResults[pos].id))
         }
-        gvExplore.setOnItemClickListener { _, _, pos, _ -> openPostDetail(explorePosts[pos].id) }
 
         profileController = ProfileController(this, tabProfile, Prefs.myUserId)
 
@@ -212,7 +224,7 @@ class HomeActivity : Activity() {
                 .setTitle("Welcome to 70a! 📸")
                 .setMessage(
                     "• Home: stories + photos from people you follow\n" +
-                    "• Explore: all photos, and everyone to follow\n" +
+                    "• 🔍 Search: type a username to find people\n" +
                     "• ✈ (bottom bar): your messages — tap ✉ on someone's profile to start a DM\n" +
                     "• + (top right): share a photo post or a 24-hour story\n" +
                     "• Profile: your photos, highlights and settings\n\n" +
@@ -436,28 +448,22 @@ class HomeActivity : Activity() {
         }
     }
 
+    /** Explore is pure user search: re-run the current query if any,
+     * otherwise show the hint (no default list, no photo grid). */
     private fun loadExplore() {
-        Api.callArray("GET", "/api/explore") { ok, arr, _ ->
-            runOnUiThread {
-                if (ok && arr != null) {
-                    val list = mutableListOf<Post>()
-                    for (i in 0 until arr.length()) {
-                        try { list.add(Post.fromJson(arr.getJSONObject(i))) } catch (e: Exception) { }
-                    }
-                    explorePosts = list
-                    gvExplore.adapter = PostGridAdapter(this, list)
-                    tvEmptyExplore.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
-                } else {
-                    tvEmptyExplore.visibility = View.VISIBLE
-                    tvEmptyExplore.text = "Couldn't load Explore — check your connection."
-                }
-            }
-        }
-        // Default user list (empty query = everyone).
-        searchUsers("")
+        searchUsers(etSearch.text.toString().trim())
     }
 
     private fun searchUsers(q: String) {
+        // Empty query: no default content — just the hint.
+        if (q.isEmpty()) {
+            searchResults = emptyList()
+            userAdapter.notifyDataSetChanged()
+            lvUsers.visibility = View.GONE
+            tvNoUsers.visibility = View.VISIBLE
+            tvNoUsers.text = getString(R.string.search_hint)
+            return
+        }
         val encoded = java.net.URLEncoder.encode(q, "UTF-8")
         Api.callArray("GET", "/api/users?q=$encoded") { ok, arr, _ ->
             runOnUiThread {
@@ -468,13 +474,13 @@ class HomeActivity : Activity() {
                     }
                     searchResults = list
                     userAdapter.notifyDataSetChanged()
-                    val showList = q.isNotEmpty() || list.isNotEmpty()
-                    lvUsers.visibility = if (showList) View.VISIBLE else View.GONE
-                    tvNoUsers.visibility =
-                        if (q.isNotEmpty() && list.isEmpty()) View.VISIBLE else View.GONE
-                    gvExplore.visibility = if (q.isEmpty()) View.VISIBLE else View.GONE
-                    tvEmptyExplore.visibility =
-                        if (q.isEmpty() && explorePosts.isEmpty()) View.VISIBLE else View.GONE
+                    lvUsers.visibility = if (list.isEmpty()) View.GONE else View.VISIBLE
+                    if (list.isEmpty()) {
+                        tvNoUsers.visibility = View.VISIBLE
+                        tvNoUsers.text = getString(R.string.no_users_found)
+                    } else {
+                        tvNoUsers.visibility = View.GONE
+                    }
                 }
             }
         }
