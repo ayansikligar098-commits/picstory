@@ -285,6 +285,10 @@ class HomeActivity : Activity() {
         tvUnreadBadge = findViewById(R.id.tvUnreadBadge)
         tvNotifBadge = findViewById(R.id.tvNotifBadge)
         findViewById<View>(R.id.flHeart).setOnClickListener {
+            // Clear the badge at once (don't wait for the next 30s poll)
+            // and mark everything read on the server, then open the list.
+            tvNotifBadge.visibility = View.GONE
+            Api.call("POST", "/api/notifications/read") { _, _, _ -> }
             startActivity(Intent(this, NotificationsActivity::class.java))
         }
 

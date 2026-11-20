@@ -97,6 +97,11 @@ class NotificationsActivity : Activity() {
                 items = list
                 adapter.notifyDataSetChanged()
                 tvEmpty.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
+                // Opening the list marks everything read, so the heart
+                // badge stays cleared when the user goes back home.
+                if (list.any { !it.isRead }) {
+                    Api.call("POST", "/api/notifications/read") { _, _, _ -> }
+                }
             }
         }
     }
