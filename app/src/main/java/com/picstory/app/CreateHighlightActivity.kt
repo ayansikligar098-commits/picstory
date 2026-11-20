@@ -93,7 +93,9 @@ class CreateHighlightActivity : Activity() {
                                     active.add(
                                         PickableStory(
                                             s.id, s.imageUrl,
-                                            "Story • ${Ui.timeAgo(s.createdAt)}"
+                                            if (s.videoUrl.isNotEmpty())
+                                                "🎬 Video • ${Ui.timeAgo(s.createdAt)}"
+                                            else "Story • ${Ui.timeAgo(s.createdAt)}"
                                         )
                                     )
                                 }
@@ -106,7 +108,14 @@ class CreateHighlightActivity : Activity() {
                 val activeIds = active.map { it.id }.toSet()
                 val expired = Prefs.myStories()
                     .filter { it.id !in activeIds }
-                    .map { PickableStory(it.id, it.imageUrl, "Expired • ${Ui.timeAgo(it.createdAt)}") }
+                    .map {
+                        PickableStory(
+                            it.id, it.imageUrl,
+                            if (it.videoUrl.isNotEmpty())
+                                "🎬 Video • Expired • ${Ui.timeAgo(it.createdAt)}"
+                            else "Expired • ${Ui.timeAgo(it.createdAt)}"
+                        )
+                    }
                 stories = active + expired
                 adapter.notifyDataSetChanged()
                 tvEmpty.visibility = if (stories.isEmpty()) View.VISIBLE else View.GONE

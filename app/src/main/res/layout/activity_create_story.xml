@@ -37,12 +37,32 @@
             android:textColor="@color/textPrimary"
             android:textStyle="bold" />
 
+        <Button
+            android:id="@+id/btnPickVideo"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/edit_bg"
+            android:text="@string/pick_video"
+            android:textColor="@color/textPrimary"
+            android:textStyle="bold" />
+
         <ImageView
             android:id="@+id/ivStoryPreview"
             android:layout_width="match_parent"
             android:layout_height="320dp"
             android:layout_marginTop="16dp"
             android:scaleType="centerCrop"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/tvStoryInfo"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text=""
+            android:textColor="@color/textSecondary"
+            android:textSize="14sp"
             android:visibility="gone" />
 
         <Button

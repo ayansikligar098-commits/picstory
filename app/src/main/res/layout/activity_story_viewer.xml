@@ -11,6 +11,15 @@
         android:clickable="true"
         android:scaleType="fitCenter" />
 
+    <!-- Video stories: same full-screen area as the photo view.
+         Auto-plays with sound; the timer follows the video's length. -->
+    <VideoView
+        android:id="@+id/vvStory"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clickable="true"
+        android:visibility="gone" />
+
     <!-- No full-height overlay tap zones here: in v1.9 two transparent
          Buttons (btnPrev/btnNext, 120dp x full height) sat under the bottom
          bar and swallowed taps meant for the like button (same class of

@@ -60,8 +60,9 @@
     <string name="share">Share</string>
     <string name="cancel">Cancel</string>
     <string name="pick_photo">Choose a Photo</string>
+    <string name="story_too_long">Story 59 second se zyada ki nahi ho sakti</string>
     <string name="new_story">New Story</string>
-    <string name="story_hint">Photo stories disappear after 24 hours.</string>
+    <string name="story_hint">Photo &amp; video stories disappear after 24 hours. Videos max 59 seconds.</string>
     <string name="share_story">Share Story</string>
     <string name="highlight_hint">Pick your own stories — active ones and expired ones you posted from this phone.</string>
     <string name="highlight_name">Highlight name (e.g. Travel)</string>

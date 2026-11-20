@@ -85,12 +85,13 @@ object Prefs {
     // The API has no list-expired-stories endpoint, so every story this
     // user creates is recorded locally (id + image) so highlights can
     // still be built from it after the 24h expiry.
-    data class MyStory(val id: Int, val imageUrl: String, val createdAt: String)
+    data class MyStory(val id: Int, val imageUrl: String, val createdAt: String,
+                      val videoUrl: String = "")
 
-    fun recordMyStory(id: Int, imageUrl: String, createdAt: String) {
+    fun recordMyStory(id: Int, imageUrl: String, createdAt: String, videoUrl: String = "") {
         val list = myStories().toMutableList()
         if (list.none { it.id == id }) {
-            list.add(0, MyStory(id, imageUrl, createdAt))
+            list.add(0, MyStory(id, imageUrl, createdAt, videoUrl))
             saveMyStories(list.take(100))
         }
     }
@@ -101,7 +102,8 @@ object Prefs {
             val arr = JSONArray(sp.getString("my_stories", "[]") ?: "[]")
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
-                out.add(MyStory(o.optInt("id"), o.optString("image_url"), o.optString("created_at")))
+                out.add(MyStory(o.optInt("id"), o.optString("image_url"),
+                    o.optString("created_at"), o.optString("video_url")))
             }
         } catch (e: Exception) {
             // Corrupt record: start fresh rather than crash.
@@ -116,6 +118,7 @@ object Prefs {
                 put("id", s.id)
                 put("image_url", s.imageUrl)
                 put("created_at", s.createdAt)
+                put("video_url", s.videoUrl)
             })
         }
         sp.edit().putString("my_stories", arr.toString()).apply()

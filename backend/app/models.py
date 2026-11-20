@@ -47,13 +47,18 @@ class Follow(Base):
 
 
 class Story(Base):
-    """Photo story — expires 24h after posting (server-enforced)."""
+    """Photo or video story — expires 24h after posting (server-enforced).
+    Video stories are capped at 59s (enforced client-side at pick time;
+    the Docker image has no ffprobe, so the server cannot check duration).
+    """
     __tablename__ = "stories"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    kind = Column(String(16), default="image", nullable=False)  # image only in v1
+    kind = Column(String(16), default="image", nullable=False)  # image | video
     text = Column(Text, default="")
     image_url = Column(String(512), default="")
+    # Video story file (Cloudinary/local URL). Empty for photo stories.
+    video_url = Column(String(512), default="")
     bg_color = Column(String(16), default="#5B21B6")
     created_at = Column(DateTime, default=utcnow, nullable=False)
     expires_at = Column(

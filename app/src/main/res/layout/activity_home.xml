@@ -249,8 +249,10 @@
             android:scaleType="centerInside"
             android:src="@drawable/ic_nav_search" />
 
-        <!-- Create (+): purple, like the old header button. Not a tab —
-             opens the create chooser and never switches tabs. -->
+        <!-- Create (+): plain icon, like the other nav icons — no purple
+             fill. Not a tab — opens the create chooser and never switches
+             tabs. The icon itself is not clickable (v1.8 bug class): taps
+             must reach this FrameLayout's listener. -->
         <FrameLayout
             android:id="@+id/navCreate"
             android:layout_width="0dp"
@@ -259,18 +261,17 @@
             android:background="?android:attr/selectableItemBackground"
             android:contentDescription="Create">
 
-            <Button
-                android:id="@+id/btnNavCreate"
+            <ImageView
+                android:id="@+id/ivNavCreate"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
                 android:layout_gravity="center"
-                android:background="@drawable/btn_primary"
+                android:background="@android:color/transparent"
                 android:clickable="false"
+                android:contentDescription="Create"
                 android:focusable="false"
-                android:text="+"
-                android:textColor="@color/white"
-                android:textSize="20sp"
-                android:textStyle="bold" />
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_nav_add" />
         </FrameLayout>
 
         <!-- Messages (paper plane). The red number shows the unread DM count. -->

@@ -343,7 +343,7 @@ class HomeActivity : Activity() {
                     "• 🔍 Search people: type a username or name to find people\n" +
                     "• ❤️ (top right): your notifications — follows, likes, comments, messages\n" +
                     "• ✈ (bottom bar): your messages — tap ✉ on someone's profile to start a DM\n" +
-                    "• + (top right): share a photo post or a 24-hour story\n" +
+                    "• + (bottom bar): share a photo post or a 24-hour story (photo or video, max 59 seconds)\n" +
                     "• Profile: your photos, highlights and settings\n\n" +
                     "Tip: if the app can't reach the server, check the Server URL in Settings — your phone needs the server's public link, not localhost."
                 )
@@ -396,6 +396,8 @@ class HomeActivity : Activity() {
             .setColorFilter(if (currentTab == 0) selected else muted)
         findViewById<ImageView>(R.id.navExplore)
             .setColorFilter(if (currentTab == 1) selected else muted)
+        // Create (+) and Messages are actions, not tabs — always muted.
+        findViewById<ImageView>(R.id.ivNavCreate).setColorFilter(muted)
         // Messages is an action (opens the DM list), not a tab — always muted.
         findViewById<ImageView>(R.id.ivNavMessages).setColorFilter(muted)
         navProfileAvatar.alpha = if (currentTab == 3) 1.0f else 0.55f

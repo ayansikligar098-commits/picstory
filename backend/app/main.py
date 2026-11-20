@@ -87,9 +87,10 @@ _migrate_user_columns()
 
 
 def _migrate_new_columns():
-    """Add dm_messages.media_url/media_kind and posts.video_url on
-    databases built before those columns existed (same reason as above:
-    create_all() never adds missing columns). Safe no-op when present."""
+    """Add dm_messages.media_url/media_kind, posts.video_url and
+    stories.video_url on databases built before those columns existed
+    (same reason as above: create_all() never adds missing columns).
+    Safe no-op when present."""
     try:
         with engine.begin() as conn:
             if engine.dialect.name == "sqlite":
@@ -101,6 +102,9 @@ def _migrate_new_columns():
                 post_cols = [r[1] for r in conn.execute(text("PRAGMA table_info(posts)"))]
                 if "video_url" not in post_cols:
                     conn.execute(text("ALTER TABLE posts ADD COLUMN video_url VARCHAR(512) DEFAULT ''"))
+                story_cols = [r[1] for r in conn.execute(text("PRAGMA table_info(stories)"))]
+                if "video_url" not in story_cols:
+                    conn.execute(text("ALTER TABLE stories ADD COLUMN video_url VARCHAR(512) DEFAULT ''"))
             else:
                 conn.execute(
                     text("ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS media_url VARCHAR(512) DEFAULT ''")
@@ -110,6 +114,9 @@ def _migrate_new_columns():
                 )
                 conn.execute(
                     text("ALTER TABLE posts ADD COLUMN IF NOT EXISTS video_url VARCHAR(512) DEFAULT ''")
+                )
+                conn.execute(
+                    text("ALTER TABLE stories ADD COLUMN IF NOT EXISTS video_url VARCHAR(512) DEFAULT ''")
                 )
     except Exception:
         pass
@@ -251,6 +258,7 @@ def story_out(s: Story, me_id: int, db: Session) -> dict:
         "kind": s.kind,
         "text": s.text or "",
         "image_url": s.image_url or "",
+        "video_url": s.video_url or "",
         "bg_color": s.bg_color or "#5B21B6",
         "viewed_by_me": viewed,
         "like_count": like_count,
@@ -336,6 +344,7 @@ class ProfileIn(BaseModel):
 
 class StoryIn(BaseModel):
     image_url: str = ""
+    video_url: str = ""
     text: str = ""
 
 
@@ -833,13 +842,19 @@ def list_stories(db: Session = Depends(get_db), user: User = Depends(get_current
 @app.post("/api/stories")
 def create_story(body: StoryIn, db: Session = Depends(get_db),
                  user: User = Depends(get_current_user)):
-    if not body.image_url.strip():
-        raise HTTPException(status_code=400, detail="Story photo is missing")
+    # Photo or video story: exactly one media URL must be given. The
+    # 59-second cap on video stories is enforced client-side at pick
+    # time (this image has no ffprobe to check duration server-side).
+    image_url = body.image_url.strip()[:512]
+    video_url = body.video_url.strip()[:512]
+    if not image_url and not video_url:
+        raise HTTPException(status_code=400, detail="Story photo or video is missing")
     story = Story(
         user_id=user.id,
-        kind="image",
+        kind="video" if video_url else "image",
         text=body.text.strip()[:500],
-        image_url=body.image_url.strip()[:512],
+        image_url=image_url,
+        video_url=video_url,
         bg_color="#5B21B6",
     )
     db.add(story)

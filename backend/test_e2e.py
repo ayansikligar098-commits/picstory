@@ -284,6 +284,14 @@ def main():
                      body={"image_url": img_url})
     check("ayan photo story created", s == 200 and story2.get("id"), f"{s} {story2}")
     story2_id = story2["id"]
+    s, vstory = call("POST", "/api/stories", token=token_p,
+                     body={"video_url": "https://example.com/story.mp4"})
+    check("priya video story created (kind video, video_url kept)",
+          s == 200 and vstory.get("kind") == "video"
+          and vstory.get("video_url") == "https://example.com/story.mp4"
+          and vstory.get("image_url") == "", f"{s} {vstory}")
+    s, nostory = call("POST", "/api/stories", token=token_p, body={})
+    check("story with no media rejected (400)", s == 400, f"{s} {nostory}")
     s, stories = call("GET", "/api/stories", token=token_a)
     check("stories list shows followed author + own (priya, ayan)",
           s == 200 and any(g["user"]["username"] == "priya" for g in stories)
@@ -372,9 +380,13 @@ def main():
     call("POST", f"/api/stories/{story_id}/like", token=token_a)
     s, stories_l = call("GET", "/api/stories", token=token_a)
     pg = next((g for g in stories_l if g["user"]["username"] == "priya"), None)
+    # Find the liked photo story by id (not by position: priya's group
+    # also holds the newer video story, which sorts first).
     check("story list shows like_count + liked_by_me",
-          s == 200 and pg is not None and pg["stories"][0].get("like_count") == 1
-          and pg["stories"][0].get("liked_by_me") is True, f"{s} {stories_l}")
+          s == 200 and pg is not None and any(
+              st["id"] == story_id and st.get("like_count") == 1
+              and st.get("liked_by_me") is True for st in pg["stories"]),
+          f"{s} {stories_l}")
     s, slike_ghost = call("POST", "/api/stories/99999/like", token=token_a)
     check("like on nonexistent story is 404", s == 404, f"{s}")
 

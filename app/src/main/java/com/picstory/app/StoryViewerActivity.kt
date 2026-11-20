@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -16,6 +17,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.VideoView
 import org.json.JSONObject
 
 /**
@@ -31,6 +33,7 @@ class StoryViewerActivity : Activity() {
     private var title: String = ""
 
     private lateinit var ivStory: ImageView
+    private lateinit var vvStory: VideoView
     private lateinit var pbStory: ProgressBar
     private lateinit var tvStoryName: TextView
     private lateinit var tvStoryTime: TextView
@@ -49,6 +52,10 @@ class StoryViewerActivity : Activity() {
     private var autoRunnable: Runnable? = null
     private var progress = 0
     private val DURATION_MS = 5000L
+    // Video stories: the timer follows the video's own length, not the
+    // fixed 5s image timer. Set when the player is prepared.
+    private var videoPrepared = false
+    private var videoDurationMs = DURATION_MS
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -63,6 +70,7 @@ class StoryViewerActivity : Activity() {
             return
         }
         ivStory = findViewById(R.id.ivStory)
+        vvStory = findViewById(R.id.vvStory)
         pbStory = findViewById(R.id.pbStory)
         tvStoryName = findViewById(R.id.tvStoryName)
         tvStoryTime = findViewById(R.id.tvStoryTime)
@@ -75,15 +83,16 @@ class StoryViewerActivity : Activity() {
         btnDeleteStory = findViewById(R.id.btnDeleteStory)
 
         findViewById<Button>(R.id.btnClose).setOnClickListener { finish() }
-        // Prev/next: tap zones on the story image itself (left third =
+        // Prev/next: tap zones on the story media itself (left third =
         // previous, right third = next). The header and bottom bar sit
-        // above the image and take their own taps first, so this can
-        // never swallow a tap meant for the like button.
-        ivStory.setOnTouchListener { _, ev ->
+        // above the media and take their own taps first, so this can
+        // never swallow a tap meant for the like button. Same listener
+        // on the photo view and the video view.
+        val mediaTouch = View.OnTouchListener { v, ev ->
             when (ev.action) {
                 MotionEvent.ACTION_DOWN -> true
                 MotionEvent.ACTION_UP -> {
-                    val w = ivStory.width
+                    val w = v.width
                     if (w > 0) {
                         if (ev.x < w * 0.35f) show(index - 1)
                         else if (ev.x > w * 0.65f) show(index + 1)
@@ -93,6 +102,8 @@ class StoryViewerActivity : Activity() {
                 else -> false
             }
         }
+        ivStory.setOnTouchListener(mediaTouch)
+        vvStory.setOnTouchListener(mediaTouch)
         btnLike.setOnClickListener { toggleLike() }
         findViewById<Button>(R.id.btnSendStoryComment).setOnClickListener { sendStoryReply() }
         btnDeleteStory.setOnClickListener { confirmDeleteStory() }
@@ -117,6 +128,7 @@ class StoryViewerActivity : Activity() {
     override fun onDestroy() {
         super.onDestroy()
         stopTimers()
+        stopStoryVideo()
     }
 
     private fun loadStories() {
@@ -186,6 +198,8 @@ class StoryViewerActivity : Activity() {
         }
         index = i
         val story = stories[i]
+        stopTimers()
+        stopStoryVideo()
         val a = author
         if (a != null) {
             Ui.setAvatarPhoto(ivStoryAvatar, tvStoryAvatar, a)
@@ -195,11 +209,45 @@ class StoryViewerActivity : Activity() {
             tvStoryName.text = title
             tvStoryTime.text = Ui.timeAgo(story.createdAt)
         }
-        ivStory.visibility = View.VISIBLE
-        if (story.imageUrl.isNotEmpty()) {
-            ImageLoader.load(story.imageUrl, ivStory, 1200)
+        // Media: a video story plays (auto-play, with sound) and the
+        // timer follows the video's own length; a photo story shows
+        // for the fixed 5s. The like/reply bar and delete button are
+        // the same for both.
+        if (story.videoUrl.isNotEmpty()) {
+            ivStory.visibility = View.GONE
+            vvStory.visibility = View.VISIBLE
+            videoPrepared = false
+            videoDurationMs = DURATION_MS
+            try {
+                vvStory.setVideoURI(Uri.parse(Api.absUrl(story.videoUrl)))
+            } catch (e: Exception) {
+                Ui.toast(this, "Video could not play")
+                show(index + 1)
+                return
+            }
+            vvStory.setOnPreparedListener { mp ->
+                // Only start if this same story is still on screen.
+                if (stories.getOrNull(index)?.id != story.id) return@setOnPreparedListener
+                videoPrepared = true
+                videoDurationMs = mp.duration.toLong().coerceIn(1000L, 60_000L)
+                startTimers()
+            }
+            vvStory.setOnCompletionListener {
+                if (stories.getOrNull(index)?.id == story.id) show(index + 1)
+            }
+            vvStory.setOnErrorListener { _, _, _ ->
+                if (stories.getOrNull(index)?.id == story.id) show(index + 1)
+                true
+            }
         } else {
-            ivStory.setImageBitmap(null)
+            vvStory.visibility = View.GONE
+            ivStory.visibility = View.VISIBLE
+            if (story.imageUrl.isNotEmpty()) {
+                ImageLoader.load(story.imageUrl, ivStory, 1200)
+            } else {
+                ivStory.setImageBitmap(null)
+            }
+            startTimers()
         }
         // Mark viewed (only for live stories, not highlights).
         if (highlightId == 0) {
@@ -224,7 +272,8 @@ class StoryViewerActivity : Activity() {
         btnDeleteStory.visibility = if (isMine) View.VISIBLE else View.GONE
         storyBottomBar.visibility = if (isMine) View.GONE else View.VISIBLE
         updateLikeButton(story)
-        startTimers()
+        // Timers are started by the media branch above: at once for a
+        // photo, or by the player's prepared callback for a video.
     }
 
     private fun updateLikeButton(story: StoryItem) {
@@ -252,6 +301,11 @@ class StoryViewerActivity : Activity() {
         stories = stories.toMutableList().also { it[index] = optimistic }
         updateLikeButton(optimistic)
         stopTimers()
+        // A video story pauses while the like request is in flight, so
+        // the video and the timer stay in sync when they restart.
+        if (story.videoUrl.isNotEmpty() && videoPrepared) {
+            try { vvStory.pause() } catch (e: Exception) { }
+        }
         Api.call("POST", "/api/stories/$storyId/like") { ok, json, err ->
             runOnUiThread {
                 likeBusy = false
@@ -314,6 +368,7 @@ class StoryViewerActivity : Activity() {
 
     private fun deleteStory(storyId: Int) {
         stopTimers()
+        stopStoryVideo()
         Api.call("DELETE", "/api/stories/$storyId") { ok, _, err ->
             runOnUiThread {
                 if (!ok) {
@@ -334,28 +389,53 @@ class StoryViewerActivity : Activity() {
         }
     }
 
+    /**
+     * Progress + auto-advance. The duration follows the story on screen:
+     * a photo shows for the fixed 5s, a video story for its own length
+     * (capped at 60s). A video story that is not prepared yet starts no
+     * timer — the player's prepared callback starts it. Restarting the
+     * timers also restarts a video from the beginning, so the video and
+     * the progress bar can never drift apart (after a like, or after
+     * typing a reply).
+     */
     private fun startTimers() {
         // Never auto-advance while the user is typing a story reply.
         if (::etStoryComment.isInitialized && etStoryComment.hasFocus()) return
         stopTimers()
+        val story = stories.getOrNull(index)
+        val isVideo = story != null && story.videoUrl.isNotEmpty()
+        if (isVideo && !videoPrepared) return
+        val durationMs = if (isVideo) videoDurationMs else DURATION_MS
+        if (isVideo) {
+            try {
+                vvStory.seekTo(0)
+                vvStory.start()
+            } catch (e: Exception) { }
+        }
         progress = 0
         pbStory.progress = 0
         val tick = object : Runnable {
             override fun run() {
                 progress += 2
                 pbStory.progress = progress.coerceAtMost(100)
-                if (progress < 100) handler.postDelayed(this, DURATION_MS / 50)
+                if (progress < 100) handler.postDelayed(this, durationMs / 50)
             }
         }
         progressRunnable = tick
-        handler.postDelayed(tick, DURATION_MS / 50)
+        handler.postDelayed(tick, durationMs / 50)
         val auto = Runnable { show(index + 1) }
         autoRunnable = auto
-        handler.postDelayed(auto, DURATION_MS)
+        handler.postDelayed(auto, durationMs)
     }
 
     private fun stopTimers() {
         progressRunnable?.let { handler.removeCallbacks(it) }
         autoRunnable?.let { handler.removeCallbacks(it) }
+    }
+
+    /** Stop a playing video story (no-op for photos). */
+    private fun stopStoryVideo() {
+        try { vvStory.stopPlayback() } catch (e: Exception) { }
+        videoPrepared = false
     }
 }
