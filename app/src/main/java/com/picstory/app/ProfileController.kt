@@ -35,9 +35,6 @@ class ProfileController(
     private val btnMessage: Button = root.findViewById(R.id.btnMessage)
     private val btnEditProfile: Button = root.findViewById(R.id.btnEditProfile)
     private val btnMusic: Button = root.findViewById(R.id.btnMusic)
-    private val btnNewHighlight: Button = root.findViewById(R.id.btnNewHighlight)
-    private val btnSettings: Button = root.findViewById(R.id.btnSettings)
-    private val btnLogout: Button = root.findViewById(R.id.btnLogout)
     private val highlightsRow: LinearLayout = root.findViewById(R.id.highlightsRow)
     private val tvNoHighlights: TextView = root.findViewById(R.id.tvNoHighlights)
     private val gvPosts: GridView = root.findViewById(R.id.gvPosts)
@@ -70,11 +67,6 @@ class ProfileController(
         btnFollow.setOnClickListener { toggleFollow() }
         btnMessage.setOnClickListener { openDm() }
         btnEditProfile.setOnClickListener { showEditProfile() }
-        btnNewHighlight.setOnClickListener {
-            activity.startActivity(Intent(activity, CreateHighlightActivity::class.java))
-        }
-        btnSettings.setOnClickListener { showSettings() }
-        btnLogout.setOnClickListener { confirmLogout() }
         root.findViewById<View>(R.id.statFollowers).setOnClickListener {
             openUserList("followers")
         }
@@ -107,18 +99,8 @@ class ProfileController(
         Api.call("GET", "/api/users/$userId") { ok, json, err ->
             activity.runOnUiThread {
                 if (!ok || json == null) {
-                    // Broken profile must still offer a way out: Settings
-                    // and Log Out are gone by default and only appear on a
-                    // successful load, which traps a user with a stale
-                    // token (e.g. after a server DB wipe) on this screen
-                    // with no way to log out. Show them for my own profile
-                    // even when the profile itself cannot load. (A 401
-                    // also routes to the login screen via Api — this is
-                    // the fallback for any other failure.)
-                    if (userId == Prefs.myUserId) {
-                        btnSettings.visibility = View.VISIBLE
-                        btnLogout.visibility = View.VISIBLE
-                    }
+                    // A 401 routes to the login screen via Api's global
+                    // handler; any other failure just shows the error.
                     Ui.toast(activity, err ?: "Profile could not be opened")
                     return@runOnUiThread
                 }
@@ -142,9 +124,6 @@ class ProfileController(
                 btnFollow.visibility = if (own) View.GONE else View.VISIBLE
                 btnMessage.visibility = if (own) View.GONE else View.VISIBLE
                 btnEditProfile.visibility = if (own) View.VISIBLE else View.GONE
-                btnNewHighlight.visibility = if (own) View.VISIBLE else View.GONE
-                btnSettings.visibility = if (own) View.VISIBLE else View.GONE
-                btnLogout.visibility = if (own) View.VISIBLE else View.GONE
                 updateFollowButton(u)
             }
         }
@@ -585,48 +564,5 @@ class ProfileController(
         btnMusic.isEnabled = true
     }
 
-    private fun showSettings() {
-        val view = LayoutInflater.from(activity).inflate(R.layout.dialog_settings, null)
-        val etServer = view.findViewById<EditText>(R.id.etServerUrl)
-        etServer.setText(Prefs.baseUrl)
-        val btnSave = view.findViewById<Button>(R.id.btnSaveServer)
-        val btnLogoutInSettings = view.findViewById<Button>(R.id.btnLogoutSettings)
-        val dlg = AlertDialog.Builder(activity)
-            .setTitle("Settings")
-            .setView(view)
-            .setNegativeButton("Close", null)
-            .create()
-        btnSave.setOnClickListener {
-            val url = etServer.text.toString().trim().trimEnd('/')
-            if (!url.startsWith("http://") && !url.startsWith("https://")) {
-                Ui.toast(activity, "URL must start with http:// or https://")
-                return@setOnClickListener
-            }
-            Prefs.baseUrl = url
-            ImageLoader.clear()
-            Ui.toast(activity, "Server URL saved")
-            dlg.dismiss()
-            load()
-        }
-        btnLogoutInSettings.setOnClickListener {
-            dlg.dismiss()
-            confirmLogout()
-        }
-        dlg.show()
-    }
-
-    private fun confirmLogout() {
-        AlertDialog.Builder(activity)
-            .setTitle("Log out?")
-            .setMessage("You'll need to log in again to use 70a.")
-            .setPositiveButton("Log Out") { _, _ ->
-                Prefs.clearAuth()
-                val intent = Intent(activity, AuthActivity::class.java)
-                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                activity.startActivity(intent)
-                activity.finish()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
 }
+

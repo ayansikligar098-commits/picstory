@@ -198,48 +198,6 @@
             android:textColor="@color/textPrimary"
             android:textStyle="bold"
             android:visibility="gone" />
-
-        <Button
-            android:id="@+id/btnNewHighlight"
-            android:layout_width="0dp"
-            android:layout_height="44dp"
-            android:layout_marginStart="8dp"
-            android:layout_weight="1"
-            android:background="@drawable/edit_bg"
-            android:text="@string/new_highlight"
-            android:textColor="@color/textPrimary"
-            android:textStyle="bold"
-            android:visibility="gone" />
-    </LinearLayout>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:orientation="horizontal">
-
-        <Button
-            android:id="@+id/btnSettings"
-            android:layout_width="0dp"
-            android:layout_height="44dp"
-            android:layout_weight="1"
-            android:background="@drawable/edit_bg"
-            android:text="@string/settings"
-            android:textColor="@color/textPrimary"
-            android:textStyle="bold"
-            android:visibility="gone" />
-
-        <Button
-            android:id="@+id/btnLogout"
-            android:layout_width="0dp"
-            android:layout_height="44dp"
-            android:layout_marginStart="8dp"
-            android:layout_weight="1"
-            android:background="@drawable/edit_bg"
-            android:text="@string/logout"
-            android:textColor="@color/danger"
-            android:textStyle="bold"
-            android:visibility="gone" />
     </LinearLayout>
 
     <TextView

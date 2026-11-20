@@ -42,6 +42,8 @@ class HomeActivity : Activity() {
     private lateinit var lvUsers: ListView
     private lateinit var tvNoUsers: TextView
     private lateinit var btnRefresh: Button
+    private lateinit var btnCreate: Button
+    private lateinit var flHeart: View
     private lateinit var tvUnreadBadge: TextView
     private lateinit var tvNotifBadge: TextView
     private lateinit var navProfileAvatar: TextView
@@ -284,7 +286,9 @@ class HomeActivity : Activity() {
         btnRefresh = findViewById(R.id.btnRefresh)
         tvUnreadBadge = findViewById(R.id.tvUnreadBadge)
         tvNotifBadge = findViewById(R.id.tvNotifBadge)
-        findViewById<View>(R.id.flHeart).setOnClickListener {
+        btnCreate = findViewById(R.id.btnCreate)
+        flHeart = findViewById(R.id.flHeart)
+        flHeart.setOnClickListener {
             // Clear the badge at once (don't wait for the next 30s poll)
             // and mark everything read on the server, then open the list.
             tvNotifBadge.visibility = View.GONE
@@ -317,7 +321,7 @@ class HomeActivity : Activity() {
         navProfilePhoto = findViewById(R.id.ivNavProfilePhoto)
         updateNavProfile()
         btnRefresh.setOnClickListener { loadHome() }
-        findViewById<Button>(R.id.btnCreate).setOnClickListener { showCreateChooser() }
+        btnCreate.setOnClickListener { showCreateChooser() }
 
         lvFeed.setOnItemClickListener { _, _, pos, _ -> openPostDetail(feed[pos].id) }
         lvUsers.setOnItemClickListener { _, _, pos, _ ->
@@ -461,6 +465,11 @@ class HomeActivity : Activity() {
         tabHome.visibility = if (tab == 0) View.VISIBLE else View.GONE
         tabExplore.visibility = if (tab == 1) View.VISIBLE else View.GONE
         tabProfile.visibility = if (tab == 3) View.VISIBLE else View.GONE
+        // [+] and the notifications heart stay in the header everywhere
+        // EXCEPT the Profile tab: the profile page is clean without them,
+        // and they come back on Home / Explore / Messages.
+        btnCreate.visibility = if (tab == 3) View.GONE else View.VISIBLE
+        flHeart.visibility = if (tab == 3) View.GONE else View.VISIBLE
         tintNav()
         when (tab) {
             0 -> loadHome()
