@@ -337,7 +337,7 @@ class HomeActivity : Activity() {
         if (!Prefs.seenWelcome) {
             Prefs.seenWelcome = true
             AlertDialog.Builder(this)
-                .setTitle("Welcome to 70a! 📸")
+                .setTitle("Welcome to finsta! 📸")
                 .setMessage(
                     "• Home: stories + photos from people you follow\n" +
                     "• 🔍 Search people: type a username or name to find people\n" +

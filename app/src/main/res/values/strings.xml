@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">70a</string>
+    <string name="app_name">finsta</string>
     <string name="tagline">Share photos, stories and moments</string>
     <string name="login">Log In</string>
     <string name="register">Create Account</string>

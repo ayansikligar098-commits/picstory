@@ -23,7 +23,7 @@ object ShareHelper {
     private fun shareViaApp(activity: Activity, post: Post) {
         val media = post.videoUrl.ifEmpty { post.imageUrl }
         val text = buildString {
-            append("70a • @${post.author?.username ?: "user"}")
+            append("finsta • @${post.author?.username ?: "user"}")
             if (post.caption.isNotEmpty()) append(": ${post.caption}")
             if (media.isNotEmpty()) append("\n${Api.absUrl(media)}")
         }

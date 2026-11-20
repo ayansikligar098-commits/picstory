@@ -20,7 +20,7 @@
             android:layout_width="36dp"
             android:layout_height="36dp"
             android:src="@drawable/logo"
-            android:contentDescription="70a logo" />
+            android:contentDescription="finsta logo" />
 
         <TextView
             android:layout_width="wrap_content"

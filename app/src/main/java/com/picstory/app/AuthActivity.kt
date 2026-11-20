@@ -9,7 +9,7 @@ import android.widget.EditText
 import android.widget.TextView
 import org.json.JSONObject
 
-/** Log in or create a new 70a account. */
+/** Log in or create a new finsta account. */
 class AuthActivity : Activity() {
     private var isRegister = false
     private var submitting = false
