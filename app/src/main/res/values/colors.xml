@@ -7,6 +7,7 @@
     <color name="colorAccentDark">#D97706</color>
     <color name="background">#F8FAFC</color>
     <color name="surface">#FFFFFF</color>
+    <color name="card">#FFFFFF</color>
     <color name="textPrimary">#0F172A</color>
     <color name="textSecondary">#64748B</color>
     <color name="divider">#E2E8F0</color>

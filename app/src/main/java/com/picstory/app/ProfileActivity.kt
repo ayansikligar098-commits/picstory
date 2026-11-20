@@ -1,6 +1,7 @@
 package com.picstory.app
 
 import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
 
 /** View a user's profile (own or someone else's). */
@@ -27,5 +28,17 @@ class ProfileActivity : Activity() {
     override fun onResume() {
         super.onResume()
         controller?.load()
+    }
+
+    override fun onPause() {
+        // Profile music must not keep playing once the profile is left.
+        controller?.stopMusic()
+        super.onPause()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        controller?.onActivityResult(requestCode, resultCode, data)
     }
 }

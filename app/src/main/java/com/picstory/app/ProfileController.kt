@@ -8,6 +8,7 @@ import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.GridView
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import org.json.JSONObject
@@ -23,6 +24,7 @@ class ProfileController(
     private val userId: Int
 ) {
     private val tvAvatar: TextView = root.findViewById(R.id.tvAvatar)
+    private val ivAvatar: ImageView = root.findViewById(R.id.ivAvatar)
     private val tvName: TextView = root.findViewById(R.id.tvName)
     private val tvUsername: TextView = root.findViewById(R.id.tvUsername)
     private val tvBio: TextView = root.findViewById(R.id.tvBio)
@@ -31,6 +33,7 @@ class ProfileController(
     private val tvFollowingCount: TextView = root.findViewById(R.id.tvFollowingCount)
     private val btnFollow: Button = root.findViewById(R.id.btnFollow)
     private val btnEditProfile: Button = root.findViewById(R.id.btnEditProfile)
+    private val btnMusic: Button = root.findViewById(R.id.btnMusic)
     private val btnNewHighlight: Button = root.findViewById(R.id.btnNewHighlight)
     private val btnSettings: Button = root.findViewById(R.id.btnSettings)
     private val btnLogout: Button = root.findViewById(R.id.btnLogout)
@@ -42,8 +45,27 @@ class ProfileController(
     private var user: User? = null
     private var posts: List<Post> = emptyList()
     private var followBusy = false
+    private var avatarUploading = false
+    private var musicUploading = false
+
+    // Profile music playback (MediaPlayer streams from the server URL).
+    private var mediaPlayer: android.media.MediaPlayer? = null
+    private var musicPlaying = false
+    private var playingMusicUrl: String = ""
+
+    companion object {
+        /** Gallery request code for picking a profile photo. */
+        const val REQ_AVATAR = 4001
+        /** Audio picker request code for picking profile music. */
+        const val REQ_MUSIC = 4002
+        /** Username: lowercase letters, numbers, underscore; 3–20 chars. */
+        val USERNAME_OK = Regex("^[a-z0-9_]{3,20}$")
+    }
 
     init {
+        tvAvatar.setOnClickListener { maybePickAvatar() }
+        ivAvatar.setOnClickListener { maybePickAvatar() }
+        btnMusic.setOnClickListener { toggleMusic() }
         btnFollow.setOnClickListener { toggleFollow() }
         btnEditProfile.setOnClickListener { showEditProfile() }
         btnNewHighlight.setOnClickListener {
@@ -87,8 +109,15 @@ class ProfileController(
                     return@runOnUiThread
                 }
                 val u = User.fromJson(json)
+                // The profile on screen changed (or its music did) — stop any
+                // playing track so a stale song never keeps playing.
+                if (musicPlaying && (playingMusicUrl != u.musicUrl || user?.id != u.id)) {
+                    stopMusic()
+                }
                 user = u
-                Ui.setAvatar(tvAvatar, u)
+                Ui.setAvatarPhoto(ivAvatar, tvAvatar, u)
+                btnMusic.visibility = if (u.musicUrl.isNotEmpty()) View.VISIBLE else View.GONE
+                if (!musicPlaying) btnMusic.text = "▶ Play music"
                 tvName.text = u.displayName
                 tvUsername.text = "@${u.username}"
                 tvBio.text = u.bio.ifEmpty { "No bio yet" }
@@ -237,21 +266,55 @@ class ProfileController(
         val u = user ?: return
         val view = LayoutInflater.from(activity).inflate(R.layout.dialog_edit_profile, null)
         val etName = view.findViewById<EditText>(R.id.etName)
+        val etUsername = view.findViewById<EditText>(R.id.etUsername)
         val etBio = view.findViewById<EditText>(R.id.etBio)
         etName.setText(u.displayName)
+        etUsername.setText(u.username)
         etBio.setText(u.bio)
-        AlertDialog.Builder(activity)
+        val btnChangePhoto = view.findViewById<Button>(R.id.btnChangePhoto)
+        val btnRemovePhoto = view.findViewById<Button>(R.id.btnRemovePhoto)
+        val tvMusicStatus = view.findViewById<TextView>(R.id.tvMusicStatus)
+        val btnChooseMusic = view.findViewById<Button>(R.id.btnChooseMusic)
+        val btnRemoveMusic = view.findViewById<Button>(R.id.btnRemoveMusic)
+        tvMusicStatus.text =
+            if (u.musicUrl.isNotEmpty()) "🎵 Music set" else "No music set"
+        btnRemovePhoto.visibility = if (u.avatarUrl.isNotEmpty()) View.VISIBLE else View.GONE
+        btnRemoveMusic.visibility = if (u.musicUrl.isNotEmpty()) View.VISIBLE else View.GONE
+        val dlg = AlertDialog.Builder(activity)
             .setTitle("Edit profile")
             .setView(view)
-            .setPositiveButton("Save") { _, _ ->
+            .setPositiveButton("Save", null)
+            .setNegativeButton("Cancel", null)
+            .create()
+        btnChangePhoto.setOnClickListener { dlg.dismiss(); pickAvatar() }
+        btnRemovePhoto.setOnClickListener { dlg.dismiss(); removeAvatar() }
+        btnChooseMusic.setOnClickListener { dlg.dismiss(); pickMusic() }
+        btnRemoveMusic.setOnClickListener { dlg.dismiss(); removeMusic() }
+        dlg.setOnShowListener {
+            dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val name = etName.text.toString().trim()
+                val username = etUsername.text.toString().trim().lowercase()
+                val bio = etBio.text.toString().trim()
+                if (name.isEmpty()) {
+                    Ui.toast(activity, "Please enter your name")
+                    return@setOnClickListener
+                }
+                if (!USERNAME_OK.matches(username)) {
+                    Ui.toast(activity, "Username: 3–20 letters, numbers or _ only")
+                    return@setOnClickListener
+                }
                 val body = JSONObject().apply {
-                    put("display_name", etName.text.toString().trim())
-                    put("bio", etBio.text.toString().trim())
+                    put("display_name", name)
+                    put("username", username)
+                    put("bio", bio)
                 }
                 Api.call("PATCH", "/api/users/me", body) { ok, json, err ->
                     activity.runOnUiThread {
                         if (ok && json != null) {
-                            Prefs.myDisplayName = json.optString("display_name", Prefs.myDisplayName)
+                            Prefs.myDisplayName =
+                                json.optString("display_name", Prefs.myDisplayName)
+                            Prefs.myUsername =
+                                json.optString("username", Prefs.myUsername)
                             Ui.toast(activity, "Profile saved")
                             loadUser()
                         } else {
@@ -259,9 +322,240 @@ class ProfileController(
                         }
                     }
                 }
+                dlg.dismiss()
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+        }
+        dlg.show()
+    }
+
+    // ---- Profile photo (DP) ----------------------------------------------
+
+    private fun maybePickAvatar() {
+        if (user?.id == Prefs.myUserId) pickAvatar()
+    }
+
+    private fun pickAvatar() {
+        if (avatarUploading) return
+        val intent = Intent(Intent.ACTION_GET_CONTENT).apply { type = "image/*" }
+        activity.startActivityForResult(
+            Intent.createChooser(intent, "Choose a profile photo"), REQ_AVATAR
+        )
+    }
+
+    /** Handles the gallery/audio picker results. Returns true if handled. */
+    fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
+        if (requestCode == REQ_AVATAR) {
+            if (resultCode != Activity.RESULT_OK || data?.data == null) return true
+            val bytes = try {
+                activity.contentResolver.openInputStream(data.data!!)?.use { it.readBytes() }
+            } catch (e: Exception) {
+                null
+            }
+            if (bytes == null || bytes.isEmpty()) {
+                Ui.toast(activity, "Could not read that photo")
+                return true
+            }
+            uploadAvatar(bytes)
+            return true
+        }
+        if (requestCode == REQ_MUSIC) {
+            if (resultCode != Activity.RESULT_OK || data?.data == null) return true
+            val uri = data.data!!
+            val mime = try { activity.contentResolver.getType(uri) } catch (e: Exception) { null }
+            val bytes = try {
+                activity.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            } catch (e: Exception) {
+                null
+            }
+            if (bytes == null || bytes.isEmpty()) {
+                Ui.toast(activity, "Could not read that audio")
+                return true
+            }
+            uploadMusic(bytes, "music.${audioExtFor(mime)}", mime ?: "audio/mpeg")
+            return true
+        }
+        return false
+    }
+
+    private fun uploadAvatar(bytes: ByteArray) {
+        if (avatarUploading) return
+        avatarUploading = true
+        Ui.toast(activity, "Uploading photo…")
+        // Instant local preview (circular crop of the chosen photo).
+        try {
+            val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            if (bmp != null) {
+                tvAvatar.visibility = View.GONE
+                ivAvatar.visibility = View.VISIBLE
+                ivAvatar.setImageBitmap(ImageLoader.circularCrop(bmp))
+            }
+        } catch (e: Exception) {
+            // Preview is best-effort; the upload result decides.
+        }
+        Api.uploadImage(bytes, "avatar.jpg") { ok, url, err ->
+            if (!ok || url.isNullOrEmpty()) {
+                activity.runOnUiThread {
+                    avatarUploading = false
+                    Ui.toast(activity, err ?: "Upload failed")
+                    loadUser()
+                }
+                return@uploadImage
+            }
+            val body = JSONObject().apply { put("avatar_url", url) }
+            Api.call("PATCH", "/api/users/me", body) { ok2, json, err2 ->
+                activity.runOnUiThread {
+                    avatarUploading = false
+                    if (ok2 && json != null) {
+                        Prefs.myAvatarUrl = json.optString("avatar_url", url)
+                        user = user?.copy(avatarUrl = Prefs.myAvatarUrl)
+                        Ui.toast(activity, "Profile photo updated")
+                        loadUser()
+                    } else {
+                        Ui.toast(activity, err2 ?: "Could not save photo")
+                        loadUser()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun removeAvatar() {
+        val body = JSONObject().apply { put("avatar_url", "") }
+        Api.call("PATCH", "/api/users/me", body) { ok, json, err ->
+            activity.runOnUiThread {
+                if (ok && json != null) {
+                    Prefs.myAvatarUrl = ""
+                    user = user?.copy(avatarUrl = "")
+                    Ui.toast(activity, "Profile photo removed")
+                    loadUser()
+                } else {
+                    Ui.toast(activity, err ?: "Could not remove photo")
+                }
+            }
+        }
+    }
+
+    // ---- Profile music -----------------------------------------------------
+
+    private fun pickMusic() {
+        if (musicUploading) return
+        val intent = Intent(Intent.ACTION_GET_CONTENT).apply { type = "audio/*" }
+        activity.startActivityForResult(
+            Intent.createChooser(intent, "Choose music"), REQ_MUSIC
+        )
+    }
+
+    private fun audioExtFor(mime: String?): String = when (mime?.lowercase()) {
+        "audio/mp4", "audio/x-m4a" -> "m4a"
+        "audio/aac" -> "aac"
+        "audio/ogg", "audio/vorbis" -> "ogg"
+        "audio/wav", "audio/x-wav", "audio/wave" -> "wav"
+        else -> "mp3"
+    }
+
+    private fun uploadMusic(bytes: ByteArray, filename: String, mimeType: String) {
+        if (musicUploading) return
+        musicUploading = true
+        stopMusic()
+        Ui.toast(activity, "Uploading music…")
+        Api.uploadAudio(bytes, filename, mimeType) { ok, url, err ->
+            if (!ok || url.isNullOrEmpty()) {
+                activity.runOnUiThread {
+                    musicUploading = false
+                    Ui.toast(activity, err ?: "Upload failed")
+                }
+                return@uploadAudio
+            }
+            val body = JSONObject().apply { put("music_url", url) }
+            Api.call("PATCH", "/api/users/me", body) { ok2, json, err2 ->
+                activity.runOnUiThread {
+                    musicUploading = false
+                    if (ok2 && json != null) {
+                        user = user?.copy(musicUrl = json.optString("music_url", url))
+                        Ui.toast(activity, "Music updated")
+                        loadUser()
+                    } else {
+                        Ui.toast(activity, err2 ?: "Could not save music")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun removeMusic() {
+        stopMusic()
+        val body = JSONObject().apply { put("music_url", "") }
+        Api.call("PATCH", "/api/users/me", body) { ok, json, err ->
+            activity.runOnUiThread {
+                if (ok && json != null) {
+                    user = user?.copy(musicUrl = "")
+                    Ui.toast(activity, "Music removed")
+                    loadUser()
+                } else {
+                    Ui.toast(activity, err ?: "Could not remove music")
+                }
+            }
+        }
+    }
+
+    private fun toggleMusic() {
+        val u = user ?: return
+        val url = u.musicUrl
+        if (url.isEmpty()) return
+        if (mediaPlayer != null && playingMusicUrl == url) {
+            if (musicPlaying) {
+                mediaPlayer?.pause()
+                musicPlaying = false
+                btnMusic.text = "▶ Play music"
+            } else {
+                mediaPlayer?.start()
+                musicPlaying = true
+                btnMusic.text = "⏸ Pause music"
+            }
+            return
+        }
+        stopMusic()
+        playingMusicUrl = url
+        btnMusic.text = "Loading…"
+        btnMusic.isEnabled = false
+        try {
+            val mp = android.media.MediaPlayer()
+            mp.setDataSource(Api.absUrl(url))
+            mp.setOnPreparedListener {
+                btnMusic.isEnabled = true
+                it.start()
+                musicPlaying = true
+                btnMusic.text = "⏸ Pause music"
+            }
+            mp.setOnCompletionListener {
+                musicPlaying = false
+                btnMusic.text = "▶ Play music"
+            }
+            mp.setOnErrorListener { _, _, _ ->
+                activity.runOnUiThread {
+                    stopMusic()
+                    Ui.toast(activity, "Could not play this music")
+                }
+                true
+            }
+            mp.prepareAsync()
+            mediaPlayer = mp
+        } catch (e: Exception) {
+            btnMusic.isEnabled = true
+            btnMusic.text = "▶ Play music"
+            Ui.toast(activity, "Could not play this music")
+        }
+    }
+
+    /** Stop any playing profile music and reset the button. Call when leaving the profile. */
+    fun stopMusic() {
+        try { mediaPlayer?.stop() } catch (e: Exception) { }
+        try { mediaPlayer?.release() } catch (e: Exception) { }
+        mediaPlayer = null
+        musicPlaying = false
+        playingMusicUrl = ""
+        btnMusic.text = "▶ Play music"
+        btnMusic.isEnabled = true
     }
 
     private fun showSettings() {

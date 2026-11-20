@@ -3,6 +3,8 @@ package com.picstory.app
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.view.View
+import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import java.text.SimpleDateFormat
@@ -54,6 +56,36 @@ object Ui {
             setColor(avatarColor(key))
         }
         tv.background = d
+    }
+
+    /**
+     * Show a user's profile photo as a circular avatar; fall back to the
+     * initials circle whenever no photo is set. Call this everywhere an
+     * avatar appears so photos and initials never disagree.
+     */
+    fun setAvatarPhoto(iv: ImageView, tv: TextView, user: User) {
+        if (user.avatarUrl.isNotEmpty()) {
+            tv.visibility = View.GONE
+            iv.visibility = View.VISIBLE
+            ImageLoader.loadCircular(user.avatarUrl, iv, 200)
+        } else {
+            iv.visibility = View.GONE
+            tv.visibility = View.VISIBLE
+            setAvatar(tv, user)
+        }
+    }
+
+    /** Same as setAvatarPhoto, for places that only have a name/key (own profile, nav). */
+    fun setAvatarPhoto(iv: ImageView, tv: TextView, avatarUrl: String, name: String, key: String) {
+        if (avatarUrl.isNotEmpty()) {
+            tv.visibility = View.GONE
+            iv.visibility = View.VISIBLE
+            ImageLoader.loadCircular(avatarUrl, iv, 200)
+        } else {
+            iv.visibility = View.GONE
+            tv.visibility = View.VISIBLE
+            setAvatarText(tv, name, key)
+        }
     }
 
     private val isoFormats = listOf(

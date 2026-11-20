@@ -8,6 +8,7 @@ import android.view.ViewGroup
 import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.ListView
 import android.widget.TextView
 import org.json.JSONObject
@@ -29,10 +30,11 @@ class CommentsActivity : Activity() {
                 .inflate(R.layout.item_comment, parent, false)
             val c = comments[pos]
             val tvAvatar = v.findViewById<TextView>(R.id.tvAvatar)
+            val ivAvatar = v.findViewById<ImageView>(R.id.ivAvatar)
             val tvName = v.findViewById<TextView>(R.id.tvName)
             val tvText = v.findViewById<TextView>(R.id.tvText)
             if (c.author != null) {
-                Ui.setAvatar(tvAvatar, c.author)
+                Ui.setAvatarPhoto(ivAvatar, tvAvatar, c.author)
                 tvName.text = c.author.displayName
             } else {
                 tvName.text = "User"

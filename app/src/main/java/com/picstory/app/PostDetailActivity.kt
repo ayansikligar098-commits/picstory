@@ -38,10 +38,11 @@ class PostDetailActivity : Activity() {
                 .inflate(R.layout.item_comment, parent, false)
             val c = comments[pos]
             val tvAvatar = v.findViewById<TextView>(R.id.tvAvatar)
+            val ivAvatar = v.findViewById<ImageView>(R.id.ivAvatar)
             val tvName = v.findViewById<TextView>(R.id.tvName)
             val tvText = v.findViewById<TextView>(R.id.tvText)
             if (c.author != null) {
-                Ui.setAvatar(tvAvatar, c.author)
+                Ui.setAvatarPhoto(ivAvatar, tvAvatar, c.author)
                 tvName.text = c.author.displayName
             } else {
                 tvName.text = "User"
@@ -95,8 +96,9 @@ class PostDetailActivity : Activity() {
                 post = p
                 val author = p.author
                 val tvAvatar = findViewById<TextView>(R.id.tvAvatar)
+                val ivAvatar = findViewById<ImageView>(R.id.ivAvatar)
                 if (author != null) {
-                    Ui.setAvatar(tvAvatar, author)
+                    Ui.setAvatarPhoto(ivAvatar, tvAvatar, author)
                     findViewById<TextView>(R.id.tvName).text = author.displayName
                 } else {
                     findViewById<TextView>(R.id.tvName).text = "User"
@@ -121,6 +123,12 @@ class PostDetailActivity : Activity() {
                 btnDelete.visibility =
                     if (p.userId == Prefs.myUserId) View.VISIBLE else View.GONE
                 tvAvatar.setOnClickListener {
+                    author?.let {
+                        startActivity(Intent(this, ProfileActivity::class.java)
+                            .putExtra("user_id", it.id))
+                    }
+                }
+                ivAvatar.setOnClickListener {
                     author?.let {
                         startActivity(Intent(this, ProfileActivity::class.java)
                             .putExtra("user_id", it.id))

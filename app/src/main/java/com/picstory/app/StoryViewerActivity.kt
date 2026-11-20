@@ -28,6 +28,7 @@ class StoryViewerActivity : Activity() {
     private lateinit var tvStoryName: TextView
     private lateinit var tvStoryTime: TextView
     private lateinit var tvStoryAvatar: TextView
+    private lateinit var ivStoryAvatar: ImageView
     private lateinit var tvViewers: TextView
 
     private val handler = Handler(Looper.getMainLooper())
@@ -53,6 +54,7 @@ class StoryViewerActivity : Activity() {
         tvStoryName = findViewById(R.id.tvStoryName)
         tvStoryTime = findViewById(R.id.tvStoryTime)
         tvStoryAvatar = findViewById(R.id.tvStoryAvatar)
+        ivStoryAvatar = findViewById(R.id.ivStoryAvatar)
         tvViewers = findViewById(R.id.tvViewers)
 
         findViewById<Button>(R.id.btnClose).setOnClickListener { finish() }
@@ -146,7 +148,7 @@ class StoryViewerActivity : Activity() {
         val story = stories[i]
         val a = author
         if (a != null) {
-            Ui.setAvatar(tvStoryAvatar, a)
+            Ui.setAvatarPhoto(ivStoryAvatar, tvStoryAvatar, a)
             tvStoryName.text = if (highlightId != 0) "$title • ${a.displayName}" else a.displayName
             tvStoryTime.text = Ui.timeAgo(story.createdAt)
         } else {

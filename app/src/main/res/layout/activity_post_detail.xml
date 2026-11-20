@@ -79,6 +79,13 @@
                     android:textSize="16sp"
                     android:textStyle="bold" />
 
+                <ImageView
+                    android:id="@+id/ivAvatar"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:contentDescription="Profile photo"
+                    android:visibility="gone" />
+
                 <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"

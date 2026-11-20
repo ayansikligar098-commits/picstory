@@ -8,6 +8,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.ListView
 import android.widget.TextView
 
@@ -30,9 +31,10 @@ class UserListActivity : Activity() {
                 .inflate(R.layout.item_user, parent, false)
             val u = users[pos]
             val tvAvatar = v.findViewById<TextView>(R.id.tvAvatar)
+            val ivAvatar = v.findViewById<ImageView>(R.id.ivAvatar)
             val tvName = v.findViewById<TextView>(R.id.tvName)
             val tvSub = v.findViewById<TextView>(R.id.tvSub)
-            Ui.setAvatar(tvAvatar, u)
+            Ui.setAvatarPhoto(ivAvatar, tvAvatar, u)
             tvName.text = u.displayName
             tvSub.text = "@${u.username}"
             return v

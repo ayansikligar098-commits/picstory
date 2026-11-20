@@ -58,6 +58,13 @@
                 android:textSize="14sp"
                 android:textStyle="bold" />
 
+            <ImageView
+                android:id="@+id/ivStoryAvatar"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:contentDescription="Profile photo"
+                android:visibility="gone" />
+
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"

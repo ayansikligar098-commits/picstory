@@ -15,6 +15,8 @@ import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.GridView
+import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
@@ -39,6 +41,8 @@ class HomeActivity : Activity() {
     private lateinit var gvExplore: GridView
     private lateinit var tvEmptyExplore: TextView
     private lateinit var btnRefresh: Button
+    private lateinit var navProfileAvatar: TextView
+    private lateinit var navProfilePhoto: ImageView
 
     private var storyGroups: List<StoryGroup> = emptyList()
     private var feed: List<Post> = emptyList()
@@ -61,6 +65,7 @@ class HomeActivity : Activity() {
             val post = feed[pos]
             val author = post.author
             val tvAvatar = v.findViewById<TextView>(R.id.tvAvatar)
+            val ivAvatar = v.findViewById<ImageView>(R.id.ivAvatar)
             val tvName = v.findViewById<TextView>(R.id.tvName)
             val tvTime = v.findViewById<TextView>(R.id.tvTime)
             val tvCaption = v.findViewById<TextView>(R.id.tvCaption)
@@ -68,7 +73,7 @@ class HomeActivity : Activity() {
             val btnLike = v.findViewById<Button>(R.id.btnLike)
             val btnComment = v.findViewById<Button>(R.id.btnComment)
             if (author != null) {
-                Ui.setAvatar(tvAvatar, author)
+                Ui.setAvatarPhoto(ivAvatar, tvAvatar, author)
                 tvName.text = author.displayName
             } else {
                 tvName.text = "User"
@@ -110,6 +115,12 @@ class HomeActivity : Activity() {
                         .putExtra("user_id", it.id))
                 }
             }
+            ivAvatar.setOnClickListener {
+                author?.let {
+                    startActivity(Intent(this@HomeActivity, ProfileActivity::class.java)
+                        .putExtra("user_id", it.id))
+                }
+            }
             tvName.setOnClickListener {
                 author?.let {
                     startActivity(Intent(this@HomeActivity, ProfileActivity::class.java)
@@ -129,9 +140,10 @@ class HomeActivity : Activity() {
                 .inflate(R.layout.item_user, parent, false)
             val u = searchResults[pos]
             val tvAvatar = v.findViewById<TextView>(R.id.tvAvatar)
+            val ivAvatar = v.findViewById<ImageView>(R.id.ivAvatar)
             val tvName = v.findViewById<TextView>(R.id.tvName)
             val tvSub = v.findViewById<TextView>(R.id.tvSub)
-            Ui.setAvatar(tvAvatar, u)
+            Ui.setAvatarPhoto(ivAvatar, tvAvatar, u)
             tvName.text = u.displayName
             tvSub.text = "@${u.username} • ${u.followersCount} followers"
             return v
@@ -162,10 +174,13 @@ class HomeActivity : Activity() {
         lvUsers.adapter = userAdapter
         gvExplore.adapter = PostGridAdapter(this, explorePosts)
 
-        findViewById<Button>(R.id.navHome).setOnClickListener { showTab(0) }
-        findViewById<Button>(R.id.navExplore).setOnClickListener { showTab(1) }
-        findViewById<Button>(R.id.navCreate).setOnClickListener { showCreateChooser() }
-        findViewById<Button>(R.id.navProfile).setOnClickListener { showTab(3) }
+        findViewById<ImageButton>(R.id.navHome).setOnClickListener { showTab(0) }
+        findViewById<ImageButton>(R.id.navExplore).setOnClickListener { showTab(1) }
+        findViewById<ImageButton>(R.id.navCreate).setOnClickListener { showCreateChooser() }
+        findViewById<View>(R.id.navProfile).setOnClickListener { showTab(3) }
+        navProfileAvatar = findViewById(R.id.navProfileAvatar)
+        navProfilePhoto = findViewById(R.id.ivNavProfilePhoto)
+        updateNavProfile()
         btnRefresh.setOnClickListener { loadHome() }
 
         lvFeed.setOnItemClickListener { _, _, pos, _ -> openPostDetail(feed[pos].id) }
@@ -199,7 +214,7 @@ class HomeActivity : Activity() {
                 .setMessage(
                     "• Home: stories + photos from people you follow\n" +
                     "• Explore: all photos, and search for people to follow\n" +
-                    "• + : share a photo post or a 24-hour story\n" +
+                    "• ✈ : share a photo post or a 24-hour story\n" +
                     "• Profile: your photos, highlights and settings\n\n" +
                     "Tip: if the app can't reach the server, check the Server URL in Settings — your phone needs the server's public link, not localhost."
                 )
@@ -210,11 +225,46 @@ class HomeActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        updateNavProfile()
         when (currentTab) {
             0 -> loadHome()
             1 -> loadExplore()
             3 -> profileController?.load()
         }
+    }
+
+    override fun onPause() {
+        // Profile music must not keep playing once the app is left.
+        profileController?.stopMusic()
+        super.onPause()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (profileController?.onActivityResult(requestCode, resultCode, data) == true) {
+            updateNavProfile()
+        }
+    }
+
+    /** Paint the bottom-nav profile avatar: photo when a DP is set, initials otherwise. */
+    private fun updateNavProfile() {
+        Ui.setAvatarPhoto(
+            navProfilePhoto, navProfileAvatar, Prefs.myAvatarUrl,
+            Prefs.myDisplayName.ifEmpty { Prefs.myUsername }, Prefs.myUsername
+        )
+    }
+
+    /** Tint the bottom-nav icons: selected tab bright, others muted. */
+    private fun tintNav() {
+        val selected = resources.getColor(R.color.textPrimary, theme)
+        val muted = resources.getColor(R.color.textSecondary, theme)
+        findViewById<ImageView>(R.id.navHome)
+            .setColorFilter(if (currentTab == 0) selected else muted)
+        findViewById<ImageView>(R.id.navExplore)
+            .setColorFilter(if (currentTab == 1) selected else muted)
+        findViewById<ImageView>(R.id.navCreate).setColorFilter(selected)
+        navProfileAvatar.alpha = if (currentTab == 3) 1.0f else 0.55f
     }
 
     override fun onBackPressed() {
@@ -233,18 +283,11 @@ class HomeActivity : Activity() {
 
     private fun showTab(tab: Int) {
         currentTab = tab
+        if (tab != 3) profileController?.stopMusic()
         tabHome.visibility = if (tab == 0) View.VISIBLE else View.GONE
         tabExplore.visibility = if (tab == 1) View.VISIBLE else View.GONE
         tabProfile.visibility = if (tab == 3) View.VISIBLE else View.GONE
-        val navIds = intArrayOf(R.id.navHome, R.id.navExplore, R.id.navCreate, R.id.navProfile)
-        for (i in navIds.indices) {
-            val b = findViewById<Button>(navIds[i])
-            b.setTextColor(
-                resources.getColor(
-                    if (i == tab) R.color.colorPrimary else R.color.textSecondary, theme
-                )
-            )
-        }
+        tintNav()
         when (tab) {
             0 -> loadHome()
             1 -> loadExplore()
@@ -305,7 +348,9 @@ class HomeActivity : Activity() {
         // "Your story" circle first.
         val addView = LayoutInflater.from(this).inflate(R.layout.item_story_circle, storyRow, false)
         val addAvatar = addView.findViewById<TextView>(R.id.tvAvatar)
-        Ui.setAvatarText(addAvatar, Prefs.myDisplayName.ifEmpty { Prefs.myUsername }, Prefs.myUsername)
+        val addPhoto = addView.findViewById<ImageView>(R.id.ivAvatar)
+        Ui.setAvatarPhoto(addPhoto, addAvatar, Prefs.myAvatarUrl,
+            Prefs.myDisplayName.ifEmpty { Prefs.myUsername }, Prefs.myUsername)
         addView.findViewById<TextView>(R.id.tvName).text = "Your story"
         addView.findViewById<View>(R.id.vRing)
             .setBackgroundResource(R.drawable.story_ring_seen)
@@ -316,9 +361,10 @@ class HomeActivity : Activity() {
         for (group in storyGroups) {
             val v = LayoutInflater.from(this).inflate(R.layout.item_story_circle, storyRow, false)
             val tvAvatar = v.findViewById<TextView>(R.id.tvAvatar)
+            val ivAvatar = v.findViewById<ImageView>(R.id.ivAvatar)
             val tvName = v.findViewById<TextView>(R.id.tvName)
             val ring = v.findViewById<View>(R.id.vRing)
-            Ui.setAvatar(tvAvatar, group.user)
+            Ui.setAvatarPhoto(ivAvatar, tvAvatar, group.user)
             tvName.text = if (group.user.id == Prefs.myUserId) "Your story" else group.user.displayName
             val unviewed = group.stories.count { !it.viewedByMe }
             ring.setBackgroundResource(

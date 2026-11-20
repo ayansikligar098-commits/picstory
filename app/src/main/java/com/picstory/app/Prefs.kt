@@ -13,6 +13,13 @@ object Prefs {
     fun init(ctx: Context) {
         if (!::sp.isInitialized) {
             sp = ctx.applicationContext.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+            // Black-theme fix: installs from v1.1 stored the old default
+            // theme "system", so the v1.2 default never applied and the app
+            // stayed light. Migrate that stored "system" to "dark" once;
+            // anyone who picked light/dark in Settings keeps their choice.
+            if (sp.getString("theme", null) == "system") {
+                sp.edit().putString("theme", "dark").apply()
+            }
         }
     }
 
@@ -32,6 +39,11 @@ object Prefs {
         get() = sp.getString("display_name", "") ?: ""
         set(v) = sp.edit().putString("display_name", v).apply()
 
+    /** My own profile-photo URL ("" = no photo yet, initials are shown). */
+    var myAvatarUrl: String
+        get() = sp.getString("avatar_url", "") ?: ""
+        set(v) = sp.edit().putString("avatar_url", v).apply()
+
     /**
      * Server base URL — changeable on the login screen and in Settings.
      * Default is the public Render backend so the app works directly
@@ -42,9 +54,9 @@ object Prefs {
         get() = sp.getString("base_url", "https://picstory-backend.onrender.com") ?: "https://picstory-backend.onrender.com"
         set(v) = sp.edit().putString("base_url", v.trim().trimEnd('/')).apply()
 
-    /** "system" | "light" | "dark" */
+    /** "system" | "light" | "dark" — default is dark (black theme). */
     var theme: String
-        get() = sp.getString("theme", "system") ?: "system"
+        get() = sp.getString("theme", "dark") ?: "dark"
         set(v) = sp.edit().putString("theme", v).apply()
 
     var seenWelcome: Boolean
@@ -56,6 +68,7 @@ object Prefs {
         myUserId = user.id
         myUsername = user.username
         myDisplayName = user.displayName
+        myAvatarUrl = user.avatarUrl
     }
 
     fun clearAuth() {
@@ -63,6 +76,7 @@ object Prefs {
         myUserId = 0
         myUsername = ""
         myDisplayName = ""
+        myAvatarUrl = ""
     }
 
     val loggedIn: Boolean get() = !token.isNullOrEmpty()

@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import or_
+from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 from .db import Base, engine, get_db
@@ -40,6 +40,37 @@ STORAGE_DIR.mkdir(exist_ok=True)
 MAX_UPLOAD_MB = 10
 
 Base.metadata.create_all(bind=engine)
+
+
+def _migrate_user_columns():
+    """Add users.avatar_url / users.music_url on databases created before
+    those columns existed.
+
+    create_all() only creates missing TABLES, never missing columns, so a
+    database built by an older version would 500 on every user response
+    without this. Safe to run on every startup (no-op when present).
+    """
+    try:
+        with engine.begin() as conn:
+            if engine.dialect.name == "sqlite":
+                cols = [r[1] for r in conn.execute(text("PRAGMA table_info(users)"))]
+                for col in ("avatar_url", "music_url"):
+                    if col not in cols:
+                        conn.execute(
+                            text(f"ALTER TABLE users ADD COLUMN {col} VARCHAR(512) DEFAULT ''")
+                        )
+            else:
+                for col in ("avatar_url", "music_url"):
+                    conn.execute(
+                        text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col} VARCHAR(512) DEFAULT ''")
+                    )
+    except Exception:
+        # Never crash startup over a migration; the columns exist in every
+        # database built by the current code, so this is belt-and-braces.
+        pass
+
+
+_migrate_user_columns()
 
 app = FastAPI(title="PicStory", version="1.0.0")
 app.add_middleware(
@@ -100,6 +131,7 @@ def user_out(u: User, me_id: int, db: Session) -> dict:
         "display_name": u.display_name,
         "bio": u.bio or "",
         "avatar_url": u.avatar_url or "",
+        "music_url": u.music_url or "",
         "post_count": post_count,
         "followers_count": followers,
         "following_count": following,
@@ -195,8 +227,10 @@ class LoginIn(BaseModel):
 
 class ProfileIn(BaseModel):
     display_name: Optional[str] = None
+    username: Optional[str] = None
     bio: Optional[str] = None
     avatar_url: Optional[str] = None
+    music_url: Optional[str] = None
 
 
 class StoryIn(BaseModel):
@@ -272,10 +306,27 @@ def update_me(body: ProfileIn, db: Session = Depends(get_db),
               user: User = Depends(get_current_user)):
     if body.display_name is not None and body.display_name.strip():
         user.display_name = body.display_name.strip()[:64]
+    if body.username is not None:
+        new_username = body.username.strip().lower()
+        if not USERNAME_RE.match(new_username):
+            raise HTTPException(
+                status_code=400,
+                detail="Username must be 3-32 letters, numbers or underscore",
+            )
+        taken = (
+            db.query(User)
+            .filter(User.username == new_username, User.id != user.id)
+            .first()
+        )
+        if taken:
+            raise HTTPException(status_code=409, detail="Username already taken")
+        user.username = new_username
     if body.bio is not None:
         user.bio = body.bio[:200]
     if body.avatar_url is not None:
         user.avatar_url = body.avatar_url[:512]
+    if body.music_url is not None:
+        user.music_url = body.music_url[:512]
     db.commit()
     return user_out(user, user.id, db)
 
@@ -376,16 +427,27 @@ def list_following(user_id: int, db: Session = Depends(get_db),
 # ---------------------------------------------------------------------------
 @app.post("/api/upload")
 async def upload(
-    file: UploadFile = File(...), user: User = Depends(get_current_user)
+    file: UploadFile = File(...),
+    kind: str = Query("image"),
+    user: User = Depends(get_current_user),
 ):
-    if not (file.content_type or "").startswith("image/"):
-        raise HTTPException(status_code=400, detail="Only images can be uploaded")
+    ctype = (file.content_type or "").lower()
+    ext = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else ""
+    if kind == "audio":
+        # Profile music: audio files only.
+        if not ctype.startswith("audio/"):
+            raise HTTPException(status_code=400, detail="Only audio files can be uploaded as music")
+        if ext not in ("mp3", "m4a", "aac", "ogg", "wav"):
+            raise HTTPException(
+                status_code=400, detail="Audio must be mp3, m4a, aac, ogg or wav")
+    else:
+        if not ctype.startswith("image/"):
+            raise HTTPException(status_code=400, detail="Only images can be uploaded")
+        if ext not in ("jpg", "jpeg", "png", "webp", "gif"):
+            ext = "jpg"
     data = await file.read()
     if len(data) > MAX_UPLOAD_MB * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Image is too big (max 10 MB)")
-    ext = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "jpg"
-    if ext not in ("jpg", "jpeg", "png", "webp", "gif"):
-        ext = "jpg"
+        raise HTTPException(status_code=400, detail="File is too big (max 10 MB)")
     name = f"{uuid.uuid4().hex}.{ext}"
     (STORAGE_DIR / name).write_bytes(data)
     return {"url": f"/media/{name}"}

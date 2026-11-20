@@ -183,6 +183,83 @@ def main():
           s == 200 and any(p["id"] == post1_id and p["like_count"] == 1
                            and p["comment_count"] == 1 for p in feed2), f"{s} {feed2}")
 
+    print("== profile photo (DP) ==")
+    s, av_up = upload_png(token_a)
+    check("avatar image upload", s == 200 and av_up.get("url", "").startswith("/media/"),
+          f"{s} {av_up}")
+    av_url = av_up.get("url", "")
+    s, set_av = call("PATCH", "/api/users/me", token=token_a,
+                     body={"avatar_url": av_url})
+    check("set own avatar", s == 200 and set_av.get("avatar_url") == av_url, f"{s} {set_av}")
+    s, prof_av = call("GET", f"/api/users/{ayan_id}", token=token_p)
+    check("profile shows avatar", s == 200 and prof_av.get("avatar_url") == av_url,
+          f"{s} {prof_av}")
+    s, search_av = call("GET", "/api/users?q=aya", token=token_p)
+    check("search shows avatar",
+          s == 200 and any(u["username"] == "ayan" and u.get("avatar_url") == av_url
+                           for u in search_av), f"{s} {search_av}")
+    s, feed_av = call("GET", "/api/posts", token=token_a)
+    check("feed post author shows avatar",
+          s == 200 and any(p["id"] == post2_id and p["author"]
+                           and p["author"].get("avatar_url") == av_url for p in feed_av),
+          f"{s} {feed_av}")
+    s, comm_av = call("GET", f"/api/posts/{post1_id}/comments", token=token_p)
+    check("comment author shows avatar",
+          s == 200 and any(c["author"] and c["author"].get("avatar_url") == av_url
+                           for c in comm_av), f"{s} {comm_av}")
+    s, badav = call("POST", "/api/upload", token=token_a, raw=b"not an image",
+                    headers={"Content-Type": "text/plain"})
+    check("non-image avatar upload rejected", s in (400, 422), f"{s}")
+    s, prof_p = call("GET", f"/api/users/{priya_id}", token=token_a)
+    check("other account avatar untouched",
+          s == 200 and prof_p.get("avatar_url") == "", f"{s} {prof_p}")
+    s, noauth_av = call("PATCH", "/api/users/me", body={"avatar_url": av_url})
+    check("set avatar without token -> 401", s == 401, f"{s}")
+    s, rm_av = call("PATCH", "/api/users/me", token=token_a, body={"avatar_url": ""})
+    check("remove avatar", s == 200 and rm_av.get("avatar_url") == "", f"{s} {rm_av}")
+    s, prof_rm = call("GET", f"/api/users/{ayan_id}", token=token_p)
+    check("profile shows avatar removed",
+          s == 200 and prof_rm.get("avatar_url") == "", f"{s} {prof_rm}")
+    # set it again so later checks (and the app) see a DP on ayan
+    call("PATCH", "/api/users/me", token=token_a, body={"avatar_url": av_url})
+
+    print("== profile music ==")
+    import wave
+    wbuf = io.BytesIO()
+    with wave.open(wbuf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(8000)
+        w.writeframes(b"\x00\x00" * 800)
+    wav_bytes = wbuf.getvalue()
+
+    def upload_audio(token, data, filename, ctype):
+        boundary = "----testboundaryaudio"
+        body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; "
+                f"filename=\"{filename}\"\r\nContent-Type: {ctype}\r\n\r\n").encode() + data + \
+               f"\r\n--{boundary}--\r\n".encode()
+        return call("POST", "/api/upload?kind=audio", token=token, raw=body,
+                    headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+
+    s, mu = upload_audio(token_a, wav_bytes, "test.wav", "audio/wav")
+    check("audio upload", s == 200 and mu.get("url", "").endswith(".wav"), f"{s} {mu}")
+    mu_url = mu.get("url", "")
+    s, set_mu = call("PATCH", "/api/users/me", token=token_a, body={"music_url": mu_url})
+    check("set profile music", s == 200 and set_mu.get("music_url") == mu_url, f"{s} {set_mu}")
+    s, prof_mu = call("GET", f"/api/users/{ayan_id}", token=token_p)
+    check("profile shows music", s == 200 and prof_mu.get("music_url") == mu_url,
+          f"{s} {prof_mu}")
+    s, search_mu = call("GET", "/api/users?q=aya", token=token_p)
+    check("search shows music",
+          s == 200 and any(u["username"] == "ayan" and u.get("music_url") == mu_url
+                           for u in search_mu), f"{s} {search_mu}")
+    png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+    s, bad_mu = upload_audio(token_a, png_bytes, "test.png", "image/png")
+    check("image rejected as music", s == 400, f"{s}")
+    s, bad_mu2 = call("POST", "/api/upload?kind=audio", token=token_a, raw=b"not audio",
+                      headers={"Content-Type": "text/plain"})
+    check("text rejected as music", s in (400, 422), f"{s}")
+
     print("== explore ==")
     s, ex = call("GET", "/api/explore", token=token_r)
     check("explore shows all posts",
@@ -201,6 +278,10 @@ def main():
     check("stories list shows both authors",
           s == 200 and any(g["user"]["username"] == "priya" for g in stories)
           and any(g["user"]["username"] == "ayan" for g in stories), f"{s} {stories}")
+    check("story author shows avatar",
+          s == 200 and any(g["user"]["username"] == "ayan"
+                           and g["user"].get("avatar_url") == av_url for g in stories),
+          f"{s} {stories}")
     s, view = call("POST", f"/api/stories/{story_id}/view", token=token_r)
     check("rahul views priya story", s == 200 and view.get("viewers") == 1, f"{s} {view}")
     s, viewers = call("GET", f"/api/stories/{story_id}/viewers", token=token_p)
@@ -255,6 +336,28 @@ def main():
     check("deleted post is gone", s == 404, f"{s} {gone}")
     s, feed3 = call("GET", "/api/posts", token=token_a)
     check("feed has 1 post left", s == 200 and len(feed3) == 1, f"{s} {feed3}")
+
+    print("== username change ==")
+    s, rn = call("PATCH", "/api/users/me", token=token_a, body={"username": "ayan_new"})
+    check("change own username", s == 200 and rn.get("username") == "ayan_new",
+          f"{s} {rn}")
+    s, rn_taken = call("PATCH", "/api/users/me", token=token_a, body={"username": "priya"})
+    check("taken username -> 409", s == 409, f"{s}")
+    s, rn_bad = call("PATCH", "/api/users/me", token=token_a, body={"username": "ab"})
+    check("too-short username rejected", s == 400, f"{s}")
+    s, rn_bad2 = call("PATCH", "/api/users/me", token=token_a,
+                      body={"username": "bad name!"})
+    check("bad characters rejected", s == 400, f"{s}")
+    s, login_new = call("POST", "/api/auth/login",
+                        body={"username": "ayan_new", "password": "pass1234"})
+    check("login works with new username", s == 200 and "token" in login_new,
+          f"{s} {login_new}")
+    s, login_old = call("POST", "/api/auth/login",
+                        body={"username": "ayan", "password": "pass1234"})
+    check("old username no longer logs in", s == 401, f"{s}")
+    s, rn_me = call("GET", "/api/auth/me", token=token_a)
+    check("me shows new username", s == 200 and rn_me.get("username") == "ayan_new",
+          f"{s} {rn_me}")
 
     print(f"\nRESULT: {PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)

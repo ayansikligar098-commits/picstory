@@ -27,6 +27,7 @@ class User(Base):
     password_hash = Column(String(128), nullable=False)
     bio = Column(String(200), default="")
     avatar_url = Column(String(512), default="")
+    music_url = Column(String(512), default="")
     created_at = Column(DateTime, default=utcnow, nullable=False)
 
 
