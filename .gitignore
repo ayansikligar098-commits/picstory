@@ -1,0 +1,12 @@
+# Secrets / local-only — never commit these.
+.env
+.venv/
+*.db
+# Uploaded chat photos (local test data).
+backend/storage/*
+!backend/storage/.gitkeep
+# Build outputs.
+.gradle/
+app/build/
+local-maven/
+*.apk

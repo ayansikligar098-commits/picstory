@@ -1,0 +1,34 @@
+# Render blueprint — FREE TEST ONLY. No billing is enabled by this file;
+# a free web service costs $0, but you must create it from your own Render
+# account (Render needs an account + a Git repo; no card is required for free).
+#
+# Deploy steps (needs the user's yes + a fresh GitHub step first):
+#   1. Push this repo to GitHub (fresh PAT — needs the user's explicit go-ahead).
+#   2. In Render: New → Blueprint → pick the repo. Free plan, no card.
+#   3. After deploy, copy the https://...onrender.com URL into the app:
+#      70a → login screen → Server URL (or Settings → Server URL).
+#      Then register two accounts and use the app.
+#
+# FREE-TIER LIMITS (read before you rely on this):
+# - Free web service: 512 MB RAM, spins down after 15 min idle (~50 s cold
+#   start). This backend is light (FastAPI + SQLite, no video work),
+#   so it should fit.
+# - NO persistent disk on free services: accounts, follows, posts, stories,
+#   highlights and uploaded photos are LOST on every restart / redeploy.
+# - No push notifications (no FCM).
+# - Temporary test only. Do NOT upload private photos.
+services:
+  - type: web
+    name: picstory-backend
+    env: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        value: sqlite:///./picstory.db
+      - key: PYTHONUNBUFFERED
+        value: "1"
