@@ -122,6 +122,12 @@ object Ui {
         else SimpleDateFormat("d MMM", Locale.US).format(d)
     }
 
+    /** "14:32" (device local time) for a message timestamp. */
+    fun clockTime(iso: String?): String {
+        val d = parseIso(iso) ?: return ""
+        return SimpleDateFormat("HH:mm", Locale.US).format(d)
+    }
+
     /** Parse a "#RRGGBB" color string safely. */
     fun parseColor(hex: String, fallback: Int): Int {
         return try {

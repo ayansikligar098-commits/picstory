@@ -1,10 +1,14 @@
 package com.picstory.app
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -12,13 +16,19 @@ import android.view.ViewGroup
 import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 
-/** 1:1 DM chat with one user. Polls the thread every 5s while open. */
+/**
+ * 1:1 DM chat with one user. Polls the thread every 5s while open.
+ * Text, photo and video messages; ✓ Sent / ✓✓ Seen receipts with time;
+ * typing indicator; online/offline presence dot.
+ */
 class DmChatActivity : Activity() {
     private var userId: Int = 0
     private var displayName: String = ""
@@ -26,10 +36,13 @@ class DmChatActivity : Activity() {
     private var avatarUrl: String = ""
     private var messages: List<DmMessage> = emptyList()
     private var sendBusy = false
+    private var uploadBusy = false
     private var lastCount = -1
+    private var lastTypingSentAt = 0L
     private lateinit var lvMessages: ListView
     private lateinit var etMessage: EditText
     private lateinit var vPresenceDot: View
+    private lateinit var tvTyping: TextView
     private val pollHandler = Handler(Looper.getMainLooper())
     private var pollRunnable: Runnable? = null
     private var presenceRunnable: Runnable? = null
@@ -42,22 +55,63 @@ class DmChatActivity : Activity() {
             val v = cv ?: LayoutInflater.from(this@DmChatActivity)
                 .inflate(R.layout.item_dm_message, parent, false)
             val m = messages[pos]
+            val mediaFrame = v.findViewById<FrameLayout>(R.id.mediaFrame)
+            val ivMedia = v.findViewById<ImageView>(R.id.ivMedia)
+            val tvPlayMedia = v.findViewById<TextView>(R.id.tvPlayMedia)
             val bubbleRow = v.findViewById<LinearLayout>(R.id.msgBubbleRow)
             val tvBody = v.findViewById<TextView>(R.id.tvBody)
             val tvStatus = v.findViewById<TextView>(R.id.tvStatus)
-            tvBody.text = m.body
-            if (m.senderId == Prefs.myUserId) {
+            val mine = m.senderId == Prefs.myUserId
+            val time = Ui.clockTime(m.createdAt)
+
+            // Media (photo/video) above the text, if any.
+            if (m.mediaUrl.isNotEmpty()) {
+                mediaFrame.visibility = View.VISIBLE
+                (mediaFrame.layoutParams as LinearLayout.LayoutParams).gravity =
+                    if (mine) Gravity.END else Gravity.START
+                if (m.mediaKind == "video") {
+                    ivMedia.setImageBitmap(null)
+                    ivMedia.setBackgroundResource(R.color.colorPrimary)
+                    tvPlayMedia.visibility = View.VISIBLE
+                } else {
+                    ivMedia.setBackgroundResource(R.color.divider)
+                    tvPlayMedia.visibility = View.GONE
+                    ImageLoader.load(m.mediaUrl, ivMedia, 800)
+                }
+                mediaFrame.setOnClickListener {
+                    startActivity(Intent(this@DmChatActivity,
+                        FullscreenMediaActivity::class.java)
+                        .putExtra("media_url", m.mediaUrl)
+                        .putExtra("media_kind", m.mediaKind))
+                }
+            } else {
+                mediaFrame.visibility = View.GONE
+                mediaFrame.setOnClickListener(null)
+            }
+
+            if (m.body.isNotEmpty()) {
+                tvBody.visibility = View.VISIBLE
+                tvBody.text = m.body
+            } else {
+                tvBody.visibility = View.GONE
+            }
+
+            if (mine) {
                 bubbleRow.gravity = Gravity.END
                 tvBody.setBackgroundResource(R.drawable.btn_primary)
                 tvBody.setTextColor(resources.getColor(R.color.white, theme))
                 // Seen receipt: the other person has read this message.
                 tvStatus.visibility = View.VISIBLE
-                tvStatus.text = if (m.readAt != null) "✓✓ Seen" else "✓ Sent"
+                (tvStatus.layoutParams as LinearLayout.LayoutParams).gravity = Gravity.END
+                val ticks = if (m.readAt != null) "✓✓ Seen" else "✓ Sent"
+                tvStatus.text = if (time.isNotEmpty()) "$ticks • $time" else ticks
             } else {
                 bubbleRow.gravity = Gravity.START
                 tvBody.setBackgroundResource(R.drawable.edit_bg)
                 tvBody.setTextColor(resources.getColor(R.color.textPrimary, theme))
-                tvStatus.visibility = View.GONE
+                tvStatus.visibility = if (time.isNotEmpty()) View.VISIBLE else View.GONE
+                (tvStatus.layoutParams as LinearLayout.LayoutParams).gravity = Gravity.START
+                tvStatus.text = time
             }
             return v
         }
@@ -81,6 +135,7 @@ class DmChatActivity : Activity() {
         lvMessages = findViewById(R.id.lvMessages)
         etMessage = findViewById(R.id.etMessage)
         vPresenceDot = findViewById(R.id.vPresenceDot)
+        tvTyping = findViewById(R.id.tvTyping)
         lvMessages.adapter = adapter
 
         val tvAvatar = findViewById<TextView>(R.id.tvAvatar)
@@ -95,6 +150,20 @@ class DmChatActivity : Activity() {
                 .putExtra("user_id", userId))
         }
         findViewById<Button>(R.id.btnSend).setOnClickListener { sendMessage() }
+        findViewById<Button>(R.id.btnAttach).setOnClickListener { showAttachChooser() }
+
+        // Typing heartbeat: while I type, tell the other side every 3s.
+        etMessage.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                if (s.isNullOrEmpty()) return
+                val now = System.currentTimeMillis()
+                if (now - lastTypingSentAt < 3000) return
+                lastTypingSentAt = now
+                Api.call("POST", "/api/dm/$userId/typing") { _, _, _ -> }
+            }
+        })
     }
 
     override fun onResume() {
@@ -115,6 +184,7 @@ class DmChatActivity : Activity() {
         val r = object : Runnable {
             override fun run() {
                 loadThread()
+                loadTyping()
                 pollHandler.postDelayed(this, 5_000)
             }
         }
@@ -147,6 +217,17 @@ class DmChatActivity : Activity() {
                 vPresenceDot.setBackgroundResource(
                     if (online) R.drawable.dot_green else R.drawable.dot_red
                 )
+            }
+        }
+    }
+
+    /** "typing…" under the other person's name while they type. */
+    private fun loadTyping() {
+        Api.call("GET", "/api/dm/$userId/typing") { ok, json, _ ->
+            runOnUiThread {
+                if (!ok || json == null) return@runOnUiThread
+                tvTyping.visibility =
+                    if (json.optBoolean("typing")) View.VISIBLE else View.GONE
             }
         }
     }
@@ -185,6 +266,98 @@ class DmChatActivity : Activity() {
         Api.call("POST", "/api/dm/$userId", body) { ok, _, err ->
             runOnUiThread {
                 sendBusy = false
+                if (ok) {
+                    loadThread()
+                } else {
+                    Ui.toast(this, err ?: "Message could not be sent")
+                }
+            }
+        }
+    }
+
+    private fun showAttachChooser() {
+        AlertDialog.Builder(this)
+            .setTitle("Send photo or video")
+            .setItems(arrayOf("📷 Photo", "🎬 Video")) { _, which ->
+                pickMedia(if (which == 0) "image/*" else "video/*",
+                    if (which == 0) 4001 else 4002)
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun pickMedia(type: String, requestCode: Int) {
+        try {
+            val intent = Intent(Intent.ACTION_GET_CONTENT).apply { this.type = type }
+            startActivityForResult(Intent.createChooser(intent, "Choose"), requestCode)
+        } catch (e: Exception) {
+            Ui.toast(this, "Could not open the picker")
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if ((requestCode == 4001 || requestCode == 4002) &&
+            resultCode == RESULT_OK && data?.data != null) {
+            val uri: Uri = data.data!!
+            val isVideo = requestCode == 4002
+            val maxBytes = if (isVideo) 50L * 1024 * 1024 else 10L * 1024 * 1024
+            val bytes = readCapped(uri, maxBytes)
+            if (bytes == null) {
+                Ui.toast(this, if (isVideo) "Video is too big (max 50 MB)"
+                    else "Photo is too big (max 10 MB)")
+                return
+            }
+            val mime = contentResolver.getType(uri)
+                ?: if (isVideo) "video/mp4" else "image/jpeg"
+            val kind = if (isVideo) "video" else "image"
+            val name = if (isVideo) "dm_video.mp4" else "dm_photo.jpg"
+            uploadBusy = true
+            Ui.toast(this, "Uploading…")
+            Api.uploadMedia(bytes, name, mime, kind) { ok, url, err ->
+                runOnUiThread {
+                    uploadBusy = false
+                    if (ok && !url.isNullOrEmpty()) {
+                        sendMediaMessage(url, kind)
+                    } else {
+                        Ui.toast(this, err ?: "Upload failed")
+                    }
+                }
+            }
+        }
+    }
+
+    /** Read a picked file, capped at maxBytes (null if bigger/unreadable). */
+    private fun readCapped(uri: Uri, maxBytes: Long): ByteArray? {
+        return try {
+            contentResolver.openInputStream(uri)?.use { input ->
+                val out = ByteArrayOutputStream()
+                val buf = ByteArray(64 * 1024)
+                var total = 0L
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    total += n
+                    if (total > maxBytes) return null
+                    out.write(buf, 0, n)
+                }
+                out.toByteArray()
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun sendMediaMessage(mediaUrl: String, mediaKind: String) {
+        val caption = etMessage.text.toString().trim()
+        etMessage.setText("")
+        val body = JSONObject().apply {
+            put("body", caption)
+            put("media_url", mediaUrl)
+            put("media_kind", mediaKind)
+        }
+        Api.call("POST", "/api/dm/$userId", body) { ok, _, err ->
+            runOnUiThread {
                 if (ok) {
                     loadThread()
                 } else {

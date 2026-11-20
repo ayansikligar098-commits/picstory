@@ -27,12 +27,14 @@ from .models import (
     Highlight,
     HighlightStory,
     Message,
+    Notification,
     Post,
     PostComment,
     PostLike,
     Story,
     StoryLike,
     StoryView,
+    TypingState,
     User,
 )
 from .security import create_token, decode_token, hash_password, verify_password
@@ -41,6 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 STORAGE_DIR = BASE_DIR / "storage"
 STORAGE_DIR.mkdir(exist_ok=True)
 MAX_UPLOAD_MB = 10
+MAX_VIDEO_MB = 50
 
 Base.metadata.create_all(bind=engine)
 
@@ -79,6 +82,38 @@ def _migrate_user_columns():
 
 
 _migrate_user_columns()
+
+
+def _migrate_new_columns():
+    """Add dm_messages.media_url/media_kind and posts.video_url on
+    databases built before those columns existed (same reason as above:
+    create_all() never adds missing columns). Safe no-op when present."""
+    try:
+        with engine.begin() as conn:
+            if engine.dialect.name == "sqlite":
+                dm_cols = [r[1] for r in conn.execute(text("PRAGMA table_info(dm_messages)"))]
+                if "media_url" not in dm_cols:
+                    conn.execute(text("ALTER TABLE dm_messages ADD COLUMN media_url VARCHAR(512) DEFAULT ''"))
+                if "media_kind" not in dm_cols:
+                    conn.execute(text("ALTER TABLE dm_messages ADD COLUMN media_kind VARCHAR(16) DEFAULT 'text'"))
+                post_cols = [r[1] for r in conn.execute(text("PRAGMA table_info(posts)"))]
+                if "video_url" not in post_cols:
+                    conn.execute(text("ALTER TABLE posts ADD COLUMN video_url VARCHAR(512) DEFAULT ''"))
+            else:
+                conn.execute(
+                    text("ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS media_url VARCHAR(512) DEFAULT ''")
+                )
+                conn.execute(
+                    text("ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS media_kind VARCHAR(16) DEFAULT 'text'")
+                )
+                conn.execute(
+                    text("ALTER TABLE posts ADD COLUMN IF NOT EXISTS video_url VARCHAR(512) DEFAULT ''")
+                )
+    except Exception:
+        pass
+
+
+_migrate_new_columns()
 
 app = FastAPI(title="PicStory", version="1.0.0")
 app.add_middleware(
@@ -163,6 +198,37 @@ def user_out(u: User, me_id: int, db: Session) -> dict:
     }
 
 
+def notify(db: Session, recipient_id: int, actor: User, ntype: str,
+             ref_id: Optional[int], body: str):
+    """Create one in-app notification. Never notify yourself; never crash
+    the request that triggered it (best effort)."""
+    if recipient_id == actor.id:
+        return
+    try:
+        db.add(Notification(
+            user_id=recipient_id,
+            actor_id=actor.id,
+            type=ntype,
+            ref_id=ref_id,
+            body=body[:500],
+        ))
+    except Exception:
+        db.rollback()
+
+
+def notification_out(db: Session, n: Notification, me_id: int) -> dict:
+    actor = db.query(User).get(n.actor_id)
+    return {
+        "id": n.id,
+        "type": n.type,
+        "ref_id": n.ref_id,
+        "body": n.body or "",
+        "is_read": bool(n.is_read),
+        "created_at": iso(n.created_at),
+        "actor": user_out(actor, me_id, db) if actor else None,
+    }
+
+
 def story_out(s: Story, me_id: int, db: Session) -> dict:
     viewed = (
         db.query(StoryView)
@@ -208,6 +274,7 @@ def post_out(db: Session, post: Post, me_id: int) -> dict:
         "author": user_out(author, me_id, db) if author else None,
         "caption": post.caption or "",
         "image_url": post.image_url or "",
+        "video_url": post.video_url or "",
         "like_count": like_count,
         "comment_count": comment_count,
         "liked_by_me": liked,
@@ -273,6 +340,7 @@ class StoryIn(BaseModel):
 class PostIn(BaseModel):
     caption: str = ""
     image_url: str = ""
+    video_url: str = ""
 
 
 class CommentIn(BaseModel):
@@ -282,6 +350,8 @@ class CommentIn(BaseModel):
 class DmIn(BaseModel):
     # Validated by hand in the handler (empty / too long -> 400, not 422).
     body: str = ""
+    media_url: str = ""
+    media_kind: str = "text"  # text | image | video
 
 
 class HighlightIn(BaseModel):
@@ -414,6 +484,8 @@ def toggle_follow(user_id: int, db: Session = Depends(get_db),
     else:
         db.add(Follow(follower_id=user.id, following_id=user_id))
         following = True
+        notify(db, user_id, user, "follow", user.id,
+               f"{user.display_name} started following you")
     db.commit()
     followers = db.query(Follow).filter(Follow.following_id == user_id).count()
     return {"following": following, "followers_count": followers}
@@ -477,14 +549,23 @@ async def upload(
         if ext not in ("mp3", "m4a", "aac", "ogg", "wav"):
             raise HTTPException(
                 status_code=400, detail="Audio must be mp3, m4a, aac, ogg or wav")
+        max_mb = MAX_UPLOAD_MB
+    elif kind == "video":
+        # Reels / video DMs: video files only, up to 50 MB.
+        if not ctype.startswith("video/"):
+            raise HTTPException(status_code=400, detail="Only videos can be uploaded as video")
+        if ext not in ("mp4", "mov"):
+            raise HTTPException(status_code=400, detail="Video must be mp4 or mov")
+        max_mb = MAX_VIDEO_MB
     else:
         if not ctype.startswith("image/"):
             raise HTTPException(status_code=400, detail="Only images can be uploaded")
         if ext not in ("jpg", "jpeg", "png", "webp", "gif"):
             ext = "jpg"
+        max_mb = MAX_UPLOAD_MB
     data = await file.read()
-    if len(data) > MAX_UPLOAD_MB * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File is too big (max 10 MB)")
+    if len(data) > max_mb * 1024 * 1024:
+        raise HTTPException(status_code=400, detail=f"File is too big (max {max_mb} MB)")
     name = f"{uuid.uuid4().hex}.{ext}"
     (STORAGE_DIR / name).write_bytes(data)
     return {"url": f"/media/{name}"}
@@ -541,12 +622,13 @@ def list_user_posts(user_id: int, db: Session = Depends(get_db),
 @app.post("/api/posts")
 def create_post(body: PostIn, db: Session = Depends(get_db),
                 user: User = Depends(get_current_user)):
-    if not body.image_url.strip():
-        raise HTTPException(status_code=400, detail="Photo posts need a photo")
+    if not body.image_url.strip() and not body.video_url.strip():
+        raise HTTPException(status_code=400, detail="Photo posts need a photo, Reels need a video")
     post = Post(
         user_id=user.id,
         caption=body.caption.strip()[:1000],
         image_url=body.image_url.strip()[:512],
+        video_url=body.video_url.strip()[:512],
     )
     db.add(post)
     db.commit()
@@ -595,6 +677,9 @@ def toggle_like(post_id: int, db: Session = Depends(get_db),
     else:
         db.add(PostLike(post_id=post_id, user_id=user.id))
         liked = True
+        if post.user_id != user.id:
+            notify(db, post.user_id, user, "post_like", post_id,
+                   f"{user.display_name} liked your photo")
     db.commit()
     count = db.query(PostLike).filter(PostLike.post_id == post_id).count()
     return {"liked": liked, "like_count": count}
@@ -634,6 +719,9 @@ def add_comment(post_id: int, body: CommentIn, db: Session = Depends(get_db),
         raise HTTPException(status_code=404, detail="Post not found")
     comment = PostComment(post_id=post_id, user_id=user.id, text=body.text.strip())
     db.add(comment)
+    if post.user_id != user.id:
+        notify(db, post.user_id, user, "post_comment", post_id,
+               f"{user.display_name} commented: {body.text.strip()[:80]}")
     db.commit()
     db.refresh(comment)
     return {
@@ -652,9 +740,14 @@ def add_comment(post_id: int, body: CommentIn, db: Session = Depends(get_db),
 @app.get("/api/stories")
 def list_stories(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     now = now_naive()
+    # Only my own stories + stories from people I follow. Strangers'
+    # stories never appear here (that was the v1.9 bug: everyone saw everyone).
+    followed_ids = [r.following_id for r in
+                    db.query(Follow).filter(Follow.follower_id == user.id).all()]
+    allowed = set(followed_ids + [user.id])
     stories = (
         db.query(Story)
-        .filter(Story.expires_at > now)
+        .filter(Story.expires_at > now, Story.user_id.in_(allowed))
         .order_by(Story.created_at.desc())
         .all()
     )
@@ -750,6 +843,9 @@ def toggle_story_like(story_id: int, db: Session = Depends(get_db),
     else:
         db.add(StoryLike(story_id=story_id, user_id=user.id))
         liked = True
+        if story.user_id != user.id:
+            notify(db, story.user_id, user, "story_like", story_id,
+                   f"{user.display_name} liked your story")
     db.commit()
     count = db.query(StoryLike).filter(StoryLike.story_id == story_id).count()
     return {"liked": liked, "like_count": count}
@@ -838,6 +934,58 @@ def delete_highlight(highlight_id: int, db: Session = Depends(get_db),
 
 
 # ---------------------------------------------------------------------------
+# Notifications (in-app only — no push/Firebase in v2.0)
+# ---------------------------------------------------------------------------
+@app.get("/api/notifications")
+def list_notifications(limit: int = Query(50, ge=1, le=100),
+                        db: Session = Depends(get_db),
+                        user: User = Depends(get_current_user)):
+    rows = (
+        db.query(Notification)
+        .filter(Notification.user_id == user.id)
+        .order_by(Notification.created_at.desc(), Notification.id.desc())
+        .limit(limit).all()
+    )
+    return [notification_out(db, n, user.id) for n in rows]
+
+
+@app.get("/api/notifications/unread-count")
+def notifications_unread_count(db: Session = Depends(get_db),
+                               user: User = Depends(get_current_user)):
+    total = (
+        db.query(Notification)
+        .filter(Notification.user_id == user.id,
+                Notification.is_read.is_(False))
+        .count()
+    )
+    return {"unread": total}
+
+
+@app.post("/api/notifications/read")
+def mark_all_notifications_read(db: Session = Depends(get_db),
+                                user: User = Depends(get_current_user)):
+    n = (
+        db.query(Notification)
+        .filter(Notification.user_id == user.id,
+                Notification.is_read.is_(False))
+        .update({Notification.is_read: True}, synchronize_session=False)
+    )
+    db.commit()
+    return {"ok": True, "read": n}
+
+
+@app.post("/api/notifications/{notif_id}/read")
+def mark_one_notification_read(notif_id: int, db: Session = Depends(get_db),
+                               user: User = Depends(get_current_user)):
+    n = db.query(Notification).get(notif_id)
+    if not n or n.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    n.is_read = True
+    db.commit()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # DMs (1:1 text messages)
 # ---------------------------------------------------------------------------
 @app.get("/api/dm/conversations")
@@ -902,15 +1050,38 @@ def send_dm(user_id: int, body: DmIn, db: Session = Depends(get_db),
     if not other:
         raise HTTPException(status_code=404, detail="User not found")
     text = (body.body or "").strip()
-    if not text:
+    media_url = (body.media_url or "").strip()[:512]
+    media_kind = (body.media_kind or "text").strip().lower()
+    if media_url:
+        if media_kind not in ("image", "video"):
+            raise HTTPException(status_code=400, detail="media_kind must be image or video")
+    else:
+        media_kind = "text"
+    if not text and not media_url:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
     if len(text) > 2000:
         raise HTTPException(
             status_code=400, detail="Message is too long (max 2000 characters)")
     conv = get_or_create_conversation(db, user.id, user_id)
-    msg = Message(conversation_id=conv.id, sender_id=user.id, body=text)
+    # DM notification: one per conversation until the recipient reads it,
+    # so a chatty sender does not spam the notifications list.
+    already_unread = (
+        db.query(Message)
+        .filter(Message.conversation_id == conv.id,
+                Message.sender_id == user.id,
+                Message.read_at.is_(None))
+        .count()
+    )
+    msg = Message(conversation_id=conv.id, sender_id=user.id, body=text,
+                  media_url=media_url, media_kind=media_kind)
     conv.updated_at = now_naive()
     db.add(msg)
+    if text.startswith("📸 Story reply:"):
+        notify(db, user_id, user, "story_reply", user.id,
+               f"{user.display_name} replied to your story")
+    elif already_unread == 0:
+        notify(db, user_id, user, "dm", user.id,
+               f"{user.display_name} sent you a message")
     db.commit()
     db.refresh(msg)
     return message_out(msg)
@@ -962,9 +1133,55 @@ def message_out(m: Message) -> dict:
         "conversation_id": m.conversation_id,
         "sender_id": m.sender_id,
         "body": m.body,
+        "media_url": m.media_url or "",
+        "media_kind": m.media_kind or "text",
         "created_at": iso(m.created_at),
         "read_at": iso(m.read_at),
     }
+
+
+TYPING_TTL_SECONDS = 10
+
+
+@app.post("/api/dm/{user_id}/typing")
+def typing_heartbeat(user_id: int, db: Session = Depends(get_db),
+                     user: User = Depends(get_current_user)):
+    """Heartbeat: I am typing a message to user_id right now."""
+    other = db.query(User).get(user_id)
+    if not other:
+        raise HTTPException(status_code=404, detail="User not found")
+    row = (
+        db.query(TypingState)
+        .filter(TypingState.typer_id == user.id,
+                TypingState.recipient_id == user_id)
+        .first()
+    )
+    if row:
+        row.updated_at = now_naive()
+    else:
+        db.add(TypingState(typer_id=user.id, recipient_id=user_id))
+    db.commit()
+    return {"typing": True}
+
+
+@app.get("/api/dm/{user_id}/typing")
+def typing_status(user_id: int, db: Session = Depends(get_db),
+                  user: User = Depends(get_current_user)):
+    """Is user_id typing a message to me right now? Rows older than
+    10 seconds count as not typing (the sender's app heartbeats every 3s)."""
+    other = db.query(User).get(user_id)
+    if not other:
+        raise HTTPException(status_code=404, detail="User not found")
+    row = (
+        db.query(TypingState)
+        .filter(TypingState.typer_id == user_id,
+                TypingState.recipient_id == user.id)
+        .first()
+    )
+    typing = bool(
+        row and (now_naive() - row.updated_at).total_seconds() <= TYPING_TTL_SECONDS
+    )
+    return {"typing": typing}
 
 
 def find_conversation(db: Session, me_id: int, other_id: int):

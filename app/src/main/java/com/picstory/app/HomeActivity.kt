@@ -8,17 +8,21 @@ import android.os.Handler
 import android.os.Looper
 import android.text.Editable
 import android.text.TextWatcher
+import android.view.GestureDetector
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
+import android.widget.VideoView
 import org.json.JSONObject
 
 /**
@@ -39,8 +43,14 @@ class HomeActivity : Activity() {
     private lateinit var tvNoUsers: TextView
     private lateinit var btnRefresh: Button
     private lateinit var vUnreadDot: View
+    private lateinit var tvNotifBadge: TextView
     private lateinit var navProfileAvatar: TextView
     private lateinit var navProfilePhoto: ImageView
+    // At most one feed video plays at a time; it stops when the row scrolls
+    // away, the tab changes, or the screen is left.
+    private var activeVideoView: VideoView? = null
+    private var activeVideoIcon: View? = null
+    private var activeVideoPostId: Int = -1
 
     private var storyGroups: List<StoryGroup> = emptyList()
     private var feed: List<Post> = emptyList()
@@ -70,9 +80,13 @@ class HomeActivity : Activity() {
             val tvName = v.findViewById<TextView>(R.id.tvName)
             val tvTime = v.findViewById<TextView>(R.id.tvTime)
             val tvCaption = v.findViewById<TextView>(R.id.tvCaption)
-            val ivImage = v.findViewById<android.widget.ImageView>(R.id.ivImage)
+            val mediaFrame = v.findViewById<FrameLayout>(R.id.mediaFrame)
+            val ivImage = v.findViewById<ImageView>(R.id.ivImage)
+            val vvVideo = v.findViewById<VideoView>(R.id.vvVideo)
+            val tvPlayIcon = v.findViewById<TextView>(R.id.tvPlayIcon)
             val btnLike = v.findViewById<Button>(R.id.btnLike)
             val btnComment = v.findViewById<Button>(R.id.btnComment)
+            val btnShare = v.findViewById<Button>(R.id.btnShare)
             if (author != null) {
                 Ui.setAvatarPhoto(ivAvatar, tvAvatar, author)
                 tvName.text = author.displayName
@@ -86,30 +100,73 @@ class HomeActivity : Activity() {
             } else {
                 tvCaption.visibility = View.GONE
             }
-            if (post.imageUrl.isNotEmpty()) {
-                ivImage.visibility = View.VISIBLE
-                ImageLoader.load(post.imageUrl, ivImage, 1000)
+            // Media: a Reel (video) or a photo, never both at once.
+            // A recycled row's player is always stopped before rebinding,
+            // so a video never keeps playing after it scrolls away.
+            try { vvVideo.stopPlayback() } catch (e: Exception) { }
+            if (vvVideo == activeVideoView) {
+                activeVideoView = null
+                activeVideoIcon = null
+                activeVideoPostId = -1
+            }
+            val isVideo = post.videoUrl.isNotEmpty()
+            if (isVideo || post.imageUrl.isNotEmpty()) {
+                mediaFrame.visibility = View.VISIBLE
+                if (isVideo) {
+                    ivImage.visibility = View.GONE
+                    vvVideo.visibility = View.VISIBLE
+                    tvPlayIcon.visibility = View.VISIBLE
+                    try {
+                        vvVideo.setVideoURI(android.net.Uri.parse(Api.absUrl(post.videoUrl)))
+                    } catch (e: Exception) {
+                        tvPlayIcon.visibility = View.GONE
+                    }
+                    vvVideo.setOnPreparedListener { /* stay paused until tapped */ }
+                    vvVideo.setOnCompletionListener {
+                        tvPlayIcon.visibility = View.VISIBLE
+                        try { vvVideo.seekTo(0) } catch (e: Exception) { }
+                        if (activeVideoPostId == post.id) {
+                            activeVideoView = null
+                            activeVideoIcon = null
+                            activeVideoPostId = -1
+                        }
+                    }
+                    vvVideo.setOnErrorListener { _, _, _ ->
+                        tvPlayIcon.visibility = View.GONE
+                        true
+                    }
+                } else {
+                    vvVideo.visibility = View.GONE
+                    tvPlayIcon.visibility = View.GONE
+                    ivImage.visibility = View.VISIBLE
+                    ImageLoader.load(post.imageUrl, ivImage, 1000)
+                }
+                // Single tap: photo opens, video plays/pauses.
+                // Double-tap: like (Instagram-style).
+                val detector = GestureDetector(this@HomeActivity,
+                    object : GestureDetector.SimpleOnGestureListener() {
+                        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                            if (isVideo) toggleFeedVideo(post, vvVideo, tvPlayIcon)
+                            else openPostDetail(post.id)
+                            return true
+                        }
+                        override fun onDoubleTap(e: MotionEvent): Boolean {
+                            toggleFeedLike(post)
+                            return true
+                        }
+                    })
+                mediaFrame.setOnTouchListener { _, event ->
+                    detector.onTouchEvent(event)
+                }
             } else {
-                ivImage.visibility = View.GONE
+                mediaFrame.visibility = View.GONE
+                mediaFrame.setOnTouchListener(null)
             }
             btnLike.text = (if (post.likedByMe) "❤️ " else "🤍 ") + post.likeCount
             btnComment.text = "💬 " + post.commentCount
-            btnLike.setOnClickListener {
-                // Guard: ignore taps while a like request for this post is in flight.
-                if (!likeBusyIds.add(post.id)) return@setOnClickListener
-                Api.call("POST", "/api/posts/${post.id}/like") { ok, json, _ ->
-                    runOnUiThread {
-                        likeBusyIds.remove(post.id)
-                        if (ok && json != null) {
-                            post.likedByMe = json.optBoolean("liked")
-                            post.likeCount = json.optInt("like_count")
-                            notifyDataSetChanged()
-                        }
-                    }
-                }
-            }
+            btnLike.setOnClickListener { toggleFeedLike(post) }
             btnComment.setOnClickListener { openPostDetail(post.id) }
-            ivImage.setOnClickListener { openPostDetail(post.id) }
+            btnShare.setOnClickListener { ShareHelper.showShareSheet(this@HomeActivity, post) }
             tvAvatar.setOnClickListener {
                 author?.let {
                     startActivity(Intent(this@HomeActivity, ProfileActivity::class.java)
@@ -130,6 +187,53 @@ class HomeActivity : Activity() {
             }
             return v
         }
+    }
+
+    /** Like/unlike a feed post (also used by double-tap on the media). */
+    private fun toggleFeedLike(post: Post) {
+        // Guard: ignore taps while a like request for this post is in flight.
+        if (!likeBusyIds.add(post.id)) return
+        Api.call("POST", "/api/posts/${post.id}/like") { ok, json, _ ->
+            runOnUiThread {
+                likeBusyIds.remove(post.id)
+                if (ok && json != null) {
+                    post.likedByMe = json.optBoolean("liked")
+                    post.likeCount = json.optInt("like_count")
+                    feedAdapter.notifyDataSetChanged()
+                }
+            }
+        }
+    }
+
+    /** Tap a feed Reel to play/pause it. Only one video plays at a time. */
+    private fun toggleFeedVideo(post: Post, vv: VideoView, icon: View) {
+        try {
+            if (vv.isPlaying) {
+                vv.pause()
+                icon.visibility = View.VISIBLE
+                activeVideoView = null
+                activeVideoIcon = null
+                activeVideoPostId = -1
+            } else {
+                stopActiveVideo()
+                vv.start()
+                icon.visibility = View.GONE
+                activeVideoView = vv
+                activeVideoIcon = icon
+                activeVideoPostId = post.id
+            }
+        } catch (e: Exception) {
+            Ui.toast(this, "Video could not play")
+        }
+    }
+
+    /** Stop the currently playing feed video (if any) and reset its icon. */
+    private fun stopActiveVideo() {
+        try { activeVideoView?.stopPlayback() } catch (e: Exception) { }
+        try { activeVideoIcon?.visibility = View.VISIBLE } catch (e: Exception) { }
+        activeVideoView = null
+        activeVideoIcon = null
+        activeVideoPostId = -1
     }
 
     private val userAdapter = object : BaseAdapter() {
@@ -179,6 +283,10 @@ class HomeActivity : Activity() {
         tvNoUsers = findViewById(R.id.tvNoUsers)
         btnRefresh = findViewById(R.id.btnRefresh)
         vUnreadDot = findViewById(R.id.vUnreadDot)
+        tvNotifBadge = findViewById(R.id.tvNotifBadge)
+        findViewById<View>(R.id.flBell).setOnClickListener {
+            startActivity(Intent(this, NotificationsActivity::class.java))
+        }
 
         lvFeed.adapter = feedAdapter
         lvUsers.adapter = userAdapter
@@ -224,7 +332,8 @@ class HomeActivity : Activity() {
                 .setTitle("Welcome to 70a! 📸")
                 .setMessage(
                     "• Home: stories + photos from people you follow\n" +
-                    "• 🔍 Search: type a username to find people\n" +
+                    "• 🔍 Search people: type a username or name to find people\n" +
+                    "• 🔔 (top right): your notifications — follows, likes, comments, messages\n" +
                     "• ✈ (bottom bar): your messages — tap ✉ on someone's profile to start a DM\n" +
                     "• + (top right): share a photo post or a 24-hour story\n" +
                     "• Profile: your photos, highlights and settings\n\n" +
@@ -239,6 +348,7 @@ class HomeActivity : Activity() {
         super.onResume()
         updateNavProfile()
         refreshUnread()
+        refreshNotifCount()
         startUnreadPolling()
         when (currentTab) {
             0 -> loadHome()
@@ -250,6 +360,8 @@ class HomeActivity : Activity() {
     override fun onPause() {
         // Profile music must not keep playing once the app is left.
         profileController?.stopMusic()
+        // A feed video must not keep playing once the screen is left.
+        stopActiveVideo()
         stopUnreadPolling()
         super.onPause()
     }
@@ -293,11 +405,23 @@ class HomeActivity : Activity() {
         }
     }
 
+    /** Red number on the bell while any notification is unread. */
+    private fun refreshNotifCount() {
+        Api.call("GET", "/api/notifications/unread-count") { ok, json, _ ->
+            runOnUiThread {
+                val n = if (ok && json != null) json.optInt("unread") else 0
+                tvNotifBadge.visibility = if (n > 0) View.VISIBLE else View.GONE
+                tvNotifBadge.text = if (n > 99) "99+" else n.toString()
+            }
+        }
+    }
+
     private fun startUnreadPolling() {
         stopUnreadPolling()
         val r = object : Runnable {
             override fun run() {
                 refreshUnread()
+                refreshNotifCount()
                 unreadHandler.postDelayed(this, 30_000)
             }
         }
@@ -327,6 +451,7 @@ class HomeActivity : Activity() {
     private fun showTab(tab: Int) {
         currentTab = tab
         if (tab != 3) profileController?.stopMusic()
+        if (tab != 0) stopActiveVideo()
         tabHome.visibility = if (tab == 0) View.VISIBLE else View.GONE
         tabExplore.visibility = if (tab == 1) View.VISIBLE else View.GONE
         tabProfile.visibility = if (tab == 3) View.VISIBLE else View.GONE

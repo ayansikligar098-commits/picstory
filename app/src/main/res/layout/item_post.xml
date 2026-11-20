@@ -66,14 +66,41 @@
         android:textSize="15sp"
         android:visibility="gone" />
 
-    <ImageView
-        android:id="@+id/ivImage"
+    <!-- Photo or Reel (video). Tap once: photo opens, video plays/pauses.
+         Double-tap the media to like. -->
+    <FrameLayout
+        android:id="@+id/mediaFrame"
         android:layout_width="match_parent"
         android:layout_height="260dp"
         android:layout_marginTop="10dp"
         android:background="@color/divider"
-        android:scaleType="centerCrop"
-        android:visibility="gone" />
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/ivImage"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:visibility="gone" />
+
+        <VideoView
+            android:id="@+id/vvVideo"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/tvPlayIcon"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:layout_gravity="center"
+            android:background="@drawable/avatar_circle"
+            android:gravity="center"
+            android:text="▶"
+            android:textColor="@color/white"
+            android:textSize="22sp"
+            android:visibility="gone" />
+    </FrameLayout>
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -96,6 +123,16 @@
             android:layout_marginStart="8dp"
             android:background="@drawable/edit_bg"
             android:text="💬 0"
+            android:textColor="@color/textPrimary" />
+
+        <Button
+            android:id="@+id/btnShare"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/edit_bg"
+            android:contentDescription="Share this post"
+            android:text="↗ Share"
             android:textColor="@color/textPrimary" />
     </LinearLayout>
 </LinearLayout>

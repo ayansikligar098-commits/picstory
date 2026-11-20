@@ -13,6 +13,7 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.ListView
 import android.widget.TextView
+import android.widget.VideoView
 import org.json.JSONObject
 
 /** Full post view: photo, author, caption, like, comments, delete (own only). */
@@ -28,6 +29,8 @@ class PostDetailActivity : Activity() {
     private lateinit var tvEmptyComments: TextView
     private lateinit var btnLike: Button
     private lateinit var btnDelete: Button
+    private lateinit var vvVideo: VideoView
+    private lateinit var tvPlayIcon: TextView
 
     private val adapter = object : BaseAdapter() {
         override fun getCount() = comments.size
@@ -68,14 +71,41 @@ class PostDetailActivity : Activity() {
         tvEmptyComments = findViewById(R.id.tvEmptyComments)
         btnLike = findViewById(R.id.btnLike)
         btnDelete = findViewById(R.id.btnDelete)
+        vvVideo = findViewById(R.id.vvVideo)
+        tvPlayIcon = findViewById(R.id.tvPlayIcon)
         lvComments.adapter = adapter
 
         findViewById<Button>(R.id.btnBack).setOnClickListener { finish() }
         btnLike.setOnClickListener { toggleLike() }
         btnDelete.setOnClickListener { confirmDelete() }
+        findViewById<Button>(R.id.btnShare).setOnClickListener {
+            post?.let { ShareHelper.showShareSheet(this, it) }
+        }
         findViewById<Button>(R.id.btnSendComment).setOnClickListener { sendComment() }
+        vvVideo.setOnClickListener { toggleVideo() }
+        tvPlayIcon.setOnClickListener { toggleVideo() }
         loadPost()
         loadComments()
+    }
+
+    override fun onPause() {
+        try { vvVideo.stopPlayback() } catch (e: Exception) { }
+        super.onPause()
+    }
+
+    /** Tap the Reel to play/pause it; the play icon shows while paused. */
+    private fun toggleVideo() {
+        try {
+            if (vvVideo.isPlaying) {
+                vvVideo.pause()
+                tvPlayIcon.visibility = View.VISIBLE
+            } else {
+                vvVideo.start()
+                tvPlayIcon.visibility = View.GONE
+            }
+        } catch (e: Exception) {
+            Ui.toast(this, "Video could not play")
+        }
     }
 
     override fun onResume() {
@@ -112,10 +142,34 @@ class PostDetailActivity : Activity() {
                     tvCaption.visibility = View.GONE
                 }
                 val ivImage = findViewById<ImageView>(R.id.ivImage)
-                if (p.imageUrl.isNotEmpty()) {
+                if (p.videoUrl.isNotEmpty()) {
+                    ivImage.visibility = View.GONE
+                    vvVideo.visibility = View.VISIBLE
+                    tvPlayIcon.visibility = View.VISIBLE
+                    try {
+                        vvVideo.setVideoURI(android.net.Uri.parse(Api.absUrl(p.videoUrl)))
+                    } catch (e: Exception) {
+                        tvPlayIcon.visibility = View.GONE
+                    }
+                    vvVideo.setOnPreparedListener { /* stay paused until tapped */ }
+                    vvVideo.setOnCompletionListener {
+                        tvPlayIcon.visibility = View.VISIBLE
+                        try { vvVideo.seekTo(0) } catch (e: Exception) { }
+                    }
+                    vvVideo.setOnErrorListener { _, _, _ ->
+                        tvPlayIcon.visibility = View.GONE
+                        true
+                    }
+                } else if (p.imageUrl.isNotEmpty()) {
+                    try { vvVideo.stopPlayback() } catch (e: Exception) { }
+                    vvVideo.visibility = View.GONE
+                    tvPlayIcon.visibility = View.GONE
                     ivImage.visibility = View.VISIBLE
                     ImageLoader.load(p.imageUrl, ivImage, 1200)
                 } else {
+                    try { vvVideo.stopPlayback() } catch (e: Exception) { }
+                    vvVideo.visibility = View.GONE
+                    tvPlayIcon.visibility = View.GONE
                     ivImage.visibility = View.GONE
                 }
                 updateLikeButton()

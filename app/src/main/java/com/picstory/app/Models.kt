@@ -83,6 +83,7 @@ data class Post(
     val author: User?,
     val caption: String,
     val imageUrl: String,
+    val videoUrl: String,
     var likeCount: Int,
     var commentCount: Int,
     var likedByMe: Boolean,
@@ -95,6 +96,7 @@ data class Post(
             author = if (o.isNull("author")) null else User.fromJson(o.getJSONObject("author")),
             caption = o.optString("caption"),
             imageUrl = o.optString("image_url"),
+            videoUrl = o.optString("video_url"),
             likeCount = o.optInt("like_count"),
             commentCount = o.optInt("comment_count"),
             likedByMe = o.optBoolean("liked_by_me"),
@@ -128,6 +130,8 @@ data class DmMessage(
     val conversationId: Int,
     val senderId: Int,
     val body: String,
+    val mediaUrl: String,
+    val mediaKind: String,
     val createdAt: String?,
     val readAt: String?
 ) {
@@ -137,6 +141,8 @@ data class DmMessage(
             conversationId = o.optInt("conversation_id"),
             senderId = o.optInt("sender_id"),
             body = o.optString("body"),
+            mediaUrl = o.optString("media_url"),
+            mediaKind = o.optString("media_kind", "text"),
             createdAt = o.optString("created_at").takeIf { it.isNotEmpty() },
             readAt = o.optString("read_at").takeIf { it.isNotEmpty() }
         )
@@ -183,5 +189,30 @@ data class Highlight(
                 createdAt = o.optString("created_at")
             )
         }
+    }
+}
+
+/** One in-app notification. type: follow | post_like | post_comment |
+ * story_like | story_reply | dm. ref_id is the post/story id when there
+ * is one, else the actor's user id (for dm / story_reply). */
+data class AppNotification(
+    val id: Int,
+    val type: String,
+    val refId: Int,
+    val body: String,
+    val isRead: Boolean,
+    val createdAt: String?,
+    val actor: User?
+) {
+    companion object {
+        fun fromJson(o: JSONObject): AppNotification = AppNotification(
+            id = o.optInt("id"),
+            type = o.optString("type"),
+            refId = o.optInt("ref_id"),
+            body = o.optString("body"),
+            isRead = o.optBoolean("is_read"),
+            createdAt = o.optString("created_at").takeIf { it.isNotEmpty() },
+            actor = if (o.isNull("actor")) null else User.fromJson(o.getJSONObject("actor"))
+        )
     }
 }

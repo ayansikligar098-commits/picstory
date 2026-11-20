@@ -196,6 +196,42 @@ object Api {
         }.start()
     }
 
+    /** Upload a file to /api/upload?kind=image|video|audio.
+     * cb(success, fileUrlOrNull, error). Never crashes on bad files. */
+    fun uploadMedia(bytes: ByteArray, filename: String, mimeType: String,
+                    kind: String, cb: (Boolean, String?, String?) -> Unit) {
+        Thread {
+            try {
+                val body = MultipartBody.Builder()
+                    .setType(MultipartBody.FORM)
+                    .addFormDataPart(
+                        "file", filename,
+                        bytes.toRequestBody(mimeType.toMediaType())
+                    )
+                    .build()
+                val reqBuilder = Request.Builder()
+                    .url(base() + "/api/upload?kind=$kind").post(body)
+                Prefs.token?.let { reqBuilder.header("Authorization", "Bearer $it") }
+                client.newCall(reqBuilder.build()).execute().use { resp ->
+                    val text = resp.body?.string() ?: ""
+                    if (resp.isSuccessful) {
+                        cb(true, JSONObject(text).optString("url"), null)
+                    } else {
+                        if (resp.code == 401) handleUnauthorized()
+                        val detail = try {
+                            JSONObject(text).optString("detail", "")
+                        } catch (e: Exception) {
+                            ""
+                        }
+                        cb(false, null, detail.ifEmpty { "Upload failed (${resp.code})" })
+                    }
+                }
+            } catch (e: Exception) {
+                cb(false, null, "Upload failed: ${e.message}")
+            }
+        }.start()
+    }
+
     /** Upload an audio file (profile music) to /api/upload?kind=audio. */
     fun uploadAudio(bytes: ByteArray, filename: String, mimeType: String,
                     cb: (Boolean, String?, String?) -> Unit) {

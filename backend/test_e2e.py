@@ -98,6 +98,12 @@ def main():
     print("== users + search ==")
     s, users = call("GET", "/api/users?q=pri", token=token_a)
     check("search finds priya", s == 200 and any(u["username"] == "priya" for u in users), f"{s} {users}")
+    s, users_dn = call("GET", "/api/users?q=Sharma", token=token_a)
+    check("search matches display name (Sharma -> priya)",
+          s == 200 and any(u["username"] == "priya" for u in users_dn), f"{s} {users_dn}")
+    s, users_dn2 = call("GET", "/api/users?q=verma", token=token_a)
+    check("search matches display name case-insensitively (verma -> rahul)",
+          s == 200 and any(u["username"] == "rahul" for u in users_dn2), f"{s} {users_dn2}")
     s, users_all = call("GET", "/api/users", token=token_a)
     check("user list excludes self",
           s == 200 and all(u["username"] != "ayan" for u in users_all), f"{s} {users_all}")
@@ -274,10 +280,17 @@ def main():
                      body={"image_url": img_url})
     check("ayan photo story created", s == 200 and story2.get("id"), f"{s} {story2}")
     story2_id = story2["id"]
-    s, stories = call("GET", "/api/stories", token=token_r)
-    check("stories list shows both authors",
+    s, stories = call("GET", "/api/stories", token=token_a)
+    check("stories list shows followed author + own (priya, ayan)",
           s == 200 and any(g["user"]["username"] == "priya" for g in stories)
           and any(g["user"]["username"] == "ayan" for g in stories), f"{s} {stories}")
+    s, stories_r0 = call("GET", "/api/stories", token=token_r)
+    check("stories hidden from non-follower (rahul follows nobody -> empty)",
+          s == 200 and stories_r0 == [], f"{s} {stories_r0}")
+    s, stories_p0 = call("GET", "/api/stories", token=token_p)
+    check("stories list for priya shows only her own group",
+          s == 200 and len(stories_p0) == 1
+          and stories_p0[0]["user"]["username"] == "priya", f"{s} {stories_p0}")
     check("story author shows avatar",
           s == 200 and any(g["user"]["username"] == "ayan"
                            and g["user"].get("avatar_url") == av_url for g in stories),
@@ -296,9 +309,10 @@ def main():
                 (story2_id,))
     con.commit()
     con.close()
-    s, stories2 = call("GET", "/api/stories", token=token_r)
-    check("expired story hidden from list",
-          s == 200 and not any(g["user"]["username"] == "ayan" for g in stories2),
+    s, stories2 = call("GET", "/api/stories", token=token_a)
+    check("expired story hidden from list (ayan group gone, priya stays)",
+          s == 200 and not any(g["user"]["username"] == "ayan" for g in stories2)
+          and any(g["user"]["username"] == "priya" for g in stories2),
           f"{s} {stories2}")
     s, view_exp = call("POST", f"/api/stories/{story2_id}/view", token=token_r)
     check("expired story cannot be viewed", s == 404, f"{s} {view_exp}")
@@ -379,9 +393,10 @@ def main():
           and hl3_after.get("story_count") == 0, f"{s} {hl3_after}")
     s, del_gone = call("DELETE", f"/api/stories/{story3_id}", token=token_a)
     check("deleted story delete again is 404", s == 404, f"{s} {del_gone}")
-    s, stories3 = call("GET", "/api/stories", token=token_r)
-    check("deleted story gone from list (no ayan group)",
-          s == 200 and not any(g["user"]["username"] == "ayan" for g in stories3),
+    s, stories3 = call("GET", "/api/stories", token=token_a)
+    check("deleted story gone from list (no ayan group, priya stays)",
+          s == 200 and not any(g["user"]["username"] == "ayan" for g in stories3)
+          and any(g["user"]["username"] == "priya" for g in stories3),
           f"{s} {stories3}")
     s, del_ghost = call("DELETE", "/api/stories/99999", token=token_a)
     check("delete nonexistent story is 404", s == 404, f"{s}")
@@ -461,6 +476,37 @@ def main():
     s, noauth_unread = call("GET", "/api/dm/unread")
     check("unauthenticated unread is 401", s == 401, f"{s}")
 
+    print("== Seen re-verification (v2.0: Seen ONLY when recipient opens the chat) ==")
+    s, seen_dm = call("POST", f"/api/dm/{priya_id}", token=token_a,
+                     body={"body": "Seen check 1"})
+    check("ayan sends fresh Seen-test DM",
+          s == 200 and seen_dm.get("body") == "Seen check 1", f"{s} {seen_dm}")
+
+    def seen_read_at():
+        # Sender's view of the test message: None = "Sent", set = "Seen".
+        s2, th = call("GET", f"/api/dm/{priya_id}", token=token_a)
+        m = next((x for x in th if x.get("body") == "Seen check 1"), None)
+        return m.get("read_at") if m else "MISSING"
+
+    call("GET", f"/api/dm/{ayan_id}", token=token_p)  # priya reads the thread
+    check("recipient read the thread, no markRead yet -> still Sent",
+          seen_read_at() is None)
+    # Recipient opens only the DM list (not the chat).
+    call("GET", "/api/dm/conversations", token=token_p)
+    check("recipient opened only the DM list -> still Sent",
+          seen_read_at() is None)
+    # Sender polls his own chat (open + markRead as the sender).
+    call("GET", f"/api/dm/{priya_id}", token=token_a)
+    call("POST", f"/api/dm/{priya_id}/read", token=token_a)
+    check("sender polled + marked his own chat -> still Sent",
+          seen_read_at() is None)
+    # Recipient finally opens the chat (marks read).
+    s, rd2 = call("POST", f"/api/dm/{ayan_id}/read", token=token_p)
+    check("recipient opens chat (markRead) -> read 1", s == 200 and rd2.get("read") == 1,
+          f"{s} {rd2}")
+    check("sender now sees Seen (read_at set)",
+          seen_read_at() is not None, f"{seen_read_at()}")
+
     print("== username change ==")
     s, rn = call("PATCH", "/api/users/me", token=token_a, body={"username": "ayan_new"})
     check("change own username", s == 200 and rn.get("username") == "ayan_new",
@@ -482,6 +528,176 @@ def main():
     s, rn_me = call("GET", "/api/auth/me", token=token_a)
     check("me shows new username", s == 200 and rn_me.get("username") == "ayan_new",
           f"{s} {rn_me}")
+
+    print("== notifications (v2.0, isolated user nina) ==")
+    s, nina = call("POST", "/api/auth/register",
+                   body={"username": "nina", "display_name": "Nina Kapoor",
+                         "password": "pass1234"})
+    check("register nina", s == 200 and "token" in nina, f"{s} {nina}")
+    token_n = nina.get("token")
+    nina_id = nina["user"]["id"]
+
+    def nina_unread():
+        s2, u = call("GET", "/api/notifications/unread-count", token=token_n)
+        return u.get("unread") if s2 == 200 else -1
+
+    def nina_has(ntype, actor_username):
+        s2, ns = call("GET", "/api/notifications", token=token_n)
+        return (s2 == 200 and any(
+            n.get("type") == ntype and n.get("actor", {}).get("username") == actor_username
+            for n in ns), ns)
+
+    s, fol_n = call("POST", f"/api/users/{nina_id}/follow", token=token_a)
+    check("ayan follows nina", s == 200 and fol_n.get("following") is True, f"{s} {fol_n}")
+    ok, _ = nina_has("follow", "ayan_new")
+    check("nina got a follow notification from ayan_new", ok)
+    check("nina unread count is 1", nina_unread() == 1, f"{nina_unread()}")
+    s, npost = call("POST", "/api/posts", token=token_n,
+                    body={"caption": "Nina ki photo", "image_url": img_url})
+    check("nina creates a photo post", s == 200 and npost.get("id"), f"{s} {npost}")
+    npost_id = npost["id"]
+    s, nlike = call("POST", f"/api/posts/{npost_id}/like", token=token_a)
+    check("ayan likes nina post", s == 200 and nlike.get("liked") is True, f"{s} {nlike}")
+    ok, _ = nina_has("post_like", "ayan_new")
+    check("nina got a post_like notification", ok)
+    check("nina unread count is 2", nina_unread() == 2, f"{nina_unread()}")
+    s, ncom = call("POST", f"/api/posts/{npost_id}/comments", token=token_a,
+                   body={"text": "Bahut sundar!"})
+    check("ayan comments on nina post", s == 200 and ncom.get("id"), f"{s} {ncom}")
+    ok, _ = nina_has("post_comment", "ayan_new")
+    check("nina got a post_comment notification", ok)
+    check("nina unread count is 3", nina_unread() == 3, f"{nina_unread()}")
+    s, nstory = call("POST", "/api/stories", token=token_n,
+                     body={"image_url": img_url})
+    check("nina creates a story", s == 200 and nstory.get("id"), f"{s} {nstory}")
+    nstory_id = nstory["id"]
+    s, nslike = call("POST", f"/api/stories/{nstory_id}/like", token=token_a)
+    check("ayan likes nina story", s == 200 and nslike.get("liked") is True, f"{s} {nslike}")
+    ok, _ = nina_has("story_like", "ayan_new")
+    check("nina got a story_like notification", ok)
+    check("nina unread count is 4", nina_unread() == 4, f"{nina_unread()}")
+    s, ndm1 = call("POST", f"/api/dm/{nina_id}", token=token_a,
+                   body={"body": "Hi Nina!"})
+    check("ayan DMs nina", s == 200 and ndm1.get("id"), f"{s} {ndm1}")
+    ok, _ = nina_has("dm", "ayan_new")
+    check("nina got a dm notification", ok)
+    check("nina unread count is 5", nina_unread() == 5, f"{nina_unread()}")
+    s, ndm2 = call("POST", f"/api/dm/{nina_id}", token=token_a,
+                   body={"body": "Aur batao?"})
+    check("ayan DMs nina again", s == 200 and ndm2.get("id"), f"{s} {ndm2}")
+    check("no second dm notification while first is unread (still 5)",
+          nina_unread() == 5, f"{nina_unread()}")
+    s, ndm3 = call("POST", f"/api/dm/{nina_id}", token=token_a,
+                   body={"body": "📸 Story reply: mast story!"})
+    check("ayan sends a story-reply DM", s == 200 and ndm3.get("id"), f"{s} {ndm3}")
+    ok, _ = nina_has("story_reply", "ayan_new")
+    check("nina got a story_reply notification", ok)
+    check("nina unread count is 6", nina_unread() == 6, f"{nina_unread()}")
+    s, nlist = call("GET", "/api/notifications", token=token_n)
+    check("notifications list newest first, actor included",
+          s == 200 and len(nlist) == 6 and nlist[0].get("type") == "story_reply"
+          and nlist[0].get("actor", {}).get("username") == "ayan_new", f"{s} {nlist}")
+    follow_notif = next((n for n in nlist if n.get("type") == "follow"), None)
+    s, rd_one = call("POST", f"/api/notifications/{follow_notif['id']}/read", token=token_n)
+    check("mark one notification read", s == 200, f"{s} {rd_one}")
+    check("nina unread count is 5 after marking one read",
+          nina_unread() == 5, f"{nina_unread()}")
+    s, rd_all = call("POST", "/api/notifications/read", token=token_n)
+    check("mark all notifications read", s == 200 and rd_all.get("read") == 5,
+          f"{s} {rd_all}")
+    check("nina unread count is 0 after mark-all-read", nina_unread() == 0,
+          f"{nina_unread()}")
+    s, rd_ghost = call("POST", "/api/notifications/99999/read", token=token_n)
+    check("mark nonexistent notification read is 404", s == 404, f"{s}")
+    s, rd_other = call("POST", f"/api/notifications/{follow_notif['id']}/read",
+                       token=token_a)
+    check("cannot mark someone else's notification read (404)", s == 404, f"{s}")
+    s, noauth_notif = call("GET", "/api/notifications")
+    check("notifications without token -> 401", s == 401, f"{s}")
+
+    print("== typing indicator (v2.0) ==")
+    s, ty = call("POST", f"/api/dm/{priya_id}/typing", token=token_a)
+    check("ayan typing heartbeat to priya", s == 200 and ty.get("typing") is True,
+          f"{s} {ty}")
+    s, ty2 = call("GET", f"/api/dm/{ayan_id}/typing", token=token_p)
+    check("priya sees ayan typing", s == 200 and ty2.get("typing") is True,
+          f"{s} {ty2}")
+    s, ty3 = call("GET", f"/api/dm/{priya_id}/typing", token=token_a)
+    check("ayan does not see priya typing (she is not)",
+          s == 200 and ty3.get("typing") is False, f"{s} {ty3}")
+    con = sqlite3.connect(DB_PATH)
+    con.execute("UPDATE typing_states SET updated_at = datetime('now', '-30 seconds') "
+                "WHERE typer_id = ?", (ayan_id,))
+    con.commit()
+    con.close()
+    s, ty4 = call("GET", f"/api/dm/{ayan_id}/typing", token=token_p)
+    check("typing expires after 10s (stale heartbeat -> false)",
+          s == 200 and ty4.get("typing") is False, f"{s} {ty4}")
+    call("POST", f"/api/dm/{priya_id}/typing", token=token_a)
+    s, ty5 = call("GET", f"/api/dm/{ayan_id}/typing", token=token_p)
+    check("fresh heartbeat -> typing true again",
+          s == 200 and ty5.get("typing") is True, f"{s} {ty5}")
+    s, ty_ghost = call("POST", "/api/dm/99999/typing", token=token_a)
+    check("typing heartbeat to nonexistent user is 404", s == 404, f"{s}")
+    s, ty_ghost2 = call("GET", "/api/dm/99999/typing", token=token_a)
+    check("typing status for nonexistent user is 404", s == 404, f"{s}")
+    s, ty_noauth = call("GET", f"/api/dm/{priya_id}/typing")
+    check("typing status without token -> 401", s == 401, f"{s}")
+
+    print("== DM photo/video messages (v2.0) ==")
+    s, up_dm = upload_png(token_a)
+    check("image upload for DM", s == 200 and up_dm.get("url"), f"{s} {up_dm}")
+    dm_img_url = up_dm.get("url", "")
+    s, dm_img = call("POST", f"/api/dm/{nina_id}", token=token_a,
+                     body={"body": "", "media_url": dm_img_url, "media_kind": "image"})
+    check("ayan sends a photo DM (no text)",
+          s == 200 and dm_img.get("media_url") == dm_img_url
+          and dm_img.get("media_kind") == "image", f"{s} {dm_img}")
+    s, th_img = call("GET", f"/api/dm/{ayan_id}", token=token_n)
+    check("nina thread shows the photo DM",
+          s == 200 and any(m.get("media_url") == dm_img_url
+                           and m.get("media_kind") == "image" for m in th_img),
+          f"{s} {th_img}")
+    s, dm_vid = call("POST", f"/api/dm/{nina_id}", token=token_a,
+                     body={"body": "Ye video dekho",
+                           "media_url": "/media/test-reel.mp4", "media_kind": "video"})
+    check("ayan sends a video DM with caption",
+          s == 200 and dm_vid.get("media_kind") == "video"
+          and dm_vid.get("media_url") == "/media/test-reel.mp4"
+          and dm_vid.get("body") == "Ye video dekho", f"{s} {dm_vid}")
+    s, dm_bad_kind = call("POST", f"/api/dm/{nina_id}", token=token_a,
+                          body={"body": "hi", "media_url": "/media/x.jpg",
+                                "media_kind": "audio"})
+    check("bad media_kind is 400", s == 400, f"{s}")
+    s, dm_empty2 = call("POST", f"/api/dm/{nina_id}", token=token_a,
+                        body={"body": "   ", "media_url": "", "media_kind": "text"})
+    check("DM with neither text nor media is 400", s == 400, f"{s}")
+
+    print("== Reels / video posts (v2.0) ==")
+    s, reel = call("POST", "/api/posts", token=token_n,
+                   body={"caption": "Mera pehla reel!",
+                         "video_url": "/media/test-reel.mp4"})
+    check("nina creates a Reel (video post)",
+          s == 200 and reel.get("id") and reel.get("video_url") == "/media/test-reel.mp4",
+          f"{s} {reel}")
+    reel_id = reel["id"]
+    s, feed_reel = call("GET", "/api/posts", token=token_a)
+    check("followers feed shows the Reel with video_url",
+          s == 200 and any(p["id"] == reel_id
+                           and p.get("video_url") == "/media/test-reel.mp4"
+                           for p in feed_reel), f"{s} {feed_reel}")
+    s, ex_reel = call("GET", "/api/explore", token=token_r)
+    check("explore shows the Reel with video_url",
+          s == 200 and any(p["id"] == reel_id
+                           and p.get("video_url") == "/media/test-reel.mp4"
+                           for p in ex_reel), f"{s} {ex_reel}")
+    s, reel_detail = call("GET", f"/api/posts/{reel_id}", token=token_a)
+    check("post detail returns video_url",
+          s == 200 and reel_detail.get("video_url") == "/media/test-reel.mp4",
+          f"{s} {reel_detail}")
+    s, no_media_post = call("POST", "/api/posts", token=token_n,
+                            body={"caption": "no media at all"})
+    check("post with neither photo nor video is 400", s == 400, f"{s}")
 
     print(f"\nRESULT: {PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)

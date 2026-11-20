@@ -14,7 +14,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Nayi Post"
+            android:text="Nayi Post ya Reel"
             android:textColor="@color/textPrimary"
             android:textSize="20sp"
             android:textStyle="bold" />
@@ -28,6 +28,14 @@
             android:scaleType="centerCrop"
             android:visibility="gone" />
 
+        <VideoView
+            android:id="@+id/vvPostPreview"
+            android:layout_width="match_parent"
+            android:layout_height="280dp"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/edit_bg"
+            android:visibility="gone" />
+
         <Button
             android:id="@+id/btnPickPhoto"
             android:layout_width="match_parent"
@@ -35,6 +43,16 @@
             android:layout_marginTop="16dp"
             android:background="@drawable/edit_bg"
             android:text="📷 Photo Chuno"
+            android:textColor="@color/textPrimary"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnPickVideo"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/edit_bg"
+            android:text="🎬 Video (Reel) Chuno"
             android:textColor="@color/textPrimary"
             android:textStyle="bold" />
 

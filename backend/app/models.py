@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     ForeignKey,
@@ -85,6 +86,8 @@ class Post(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     caption = Column(Text, default="")
     image_url = Column(String(512), default="")
+    # Reel (video post). Empty for photo posts.
+    video_url = Column(String(512), default="")
     created_at = Column(DateTime, default=utcnow, nullable=False)
 
 
@@ -121,14 +124,45 @@ class Conversation(Base):
 
 
 class Message(Base):
-    """One DM text. read_at is null until the recipient marks it read."""
+    """One DM text. read_at is null until the recipient marks it read.
+    media_url/media_kind carry photo/video messages; plain text has kind 'text'."""
     __tablename__ = "dm_messages"
     id = Column(Integer, primary_key=True, index=True)
     conversation_id = Column(Integer, ForeignKey("conversations.id"), nullable=False, index=True)
     sender_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    body = Column(Text, nullable=False)
+    body = Column(Text, nullable=False, default="")
+    media_url = Column(String(512), default="")
+    media_kind = Column(String(16), default="text")  # text | image | video
     created_at = Column(DateTime, default=utcnow, nullable=False)
     read_at = Column(DateTime, nullable=True)
+
+
+class Notification(Base):
+    """In-app notification for one user. type: follow | post_like |
+    post_comment | story_like | story_reply | dm. ref_id points at the
+    post/story when there is one, else the actor's user id for dm/story_reply."""
+    __tablename__ = "notifications"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    actor_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    type = Column(String(32), nullable=False)
+    ref_id = Column(Integer, nullable=True)
+    body = Column(Text, default="")
+    is_read = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+
+class TypingState(Base):
+    """One row per (typer, recipient) while the typer is typing in that DM.
+    A heartbeat refreshes updated_at; rows older than 10s count as not typing."""
+    __tablename__ = "typing_states"
+    id = Column(Integer, primary_key=True, index=True)
+    typer_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    recipient_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    updated_at = Column(DateTime, default=utcnow, nullable=False)
+    __table_args__ = (
+        UniqueConstraint("typer_id", "recipient_id", name="uq_typing_pair"),
+    )
 
 
 class Highlight(Base):
