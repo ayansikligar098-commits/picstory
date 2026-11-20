@@ -1,15 +1,21 @@
 package com.picstory.app
 
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
+import android.widget.EditText
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import org.json.JSONObject
 
 /**
  * Full-screen story viewer with auto-advance progress.
@@ -30,6 +36,12 @@ class StoryViewerActivity : Activity() {
     private lateinit var tvStoryAvatar: TextView
     private lateinit var ivStoryAvatar: ImageView
     private lateinit var tvViewers: TextView
+    private lateinit var btnLike: Button
+    private lateinit var etStoryComment: EditText
+    private lateinit var storyBottomBar: LinearLayout
+    private lateinit var btnDeleteStory: Button
+    private var likeBusy = false
+    private var commentBusy = false
 
     private val handler = Handler(Looper.getMainLooper())
     private var progressRunnable: Runnable? = null
@@ -56,10 +68,21 @@ class StoryViewerActivity : Activity() {
         tvStoryAvatar = findViewById(R.id.tvStoryAvatar)
         ivStoryAvatar = findViewById(R.id.ivStoryAvatar)
         tvViewers = findViewById(R.id.tvViewers)
+        btnLike = findViewById(R.id.btnLike)
+        etStoryComment = findViewById(R.id.etStoryComment)
+        storyBottomBar = findViewById(R.id.storyBottomBar)
+        btnDeleteStory = findViewById(R.id.btnDeleteStory)
 
         findViewById<Button>(R.id.btnClose).setOnClickListener { finish() }
         findViewById<Button>(R.id.btnPrev).setOnClickListener { show(index - 1) }
         findViewById<Button>(R.id.btnNext).setOnClickListener { show(index + 1) }
+        btnLike.setOnClickListener { toggleLike() }
+        findViewById<Button>(R.id.btnSendStoryComment).setOnClickListener { sendStoryReply() }
+        btnDeleteStory.setOnClickListener { confirmDeleteStory() }
+        // Don't auto-advance while the user is typing a reply.
+        etStoryComment.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) stopTimers() else startTimers()
+        }
         tvViewers.setOnClickListener {
             val story = stories.getOrNull(index) ?: return@setOnClickListener
             if (author?.id == Prefs.myUserId) {
@@ -178,10 +201,100 @@ class StoryViewerActivity : Activity() {
         } else {
             tvViewers.visibility = View.GONE
         }
+        // Own story: delete button, no like/reply. Someone else's story:
+        // heart like + reply box (the reply goes to them as a DM).
+        val isMine = author?.id == Prefs.myUserId
+        btnDeleteStory.visibility = if (isMine) View.VISIBLE else View.GONE
+        storyBottomBar.visibility = if (isMine) View.GONE else View.VISIBLE
+        updateLikeButton(story)
         startTimers()
     }
 
+    private fun updateLikeButton(story: StoryItem) {
+        btnLike.text = if (story.likedByMe) "♥ ${story.likeCount}" else "♡ ${story.likeCount}"
+    }
+
+    /** Heart toggle — updates the count from the server response. */
+    private fun toggleLike() {
+        if (likeBusy) return
+        val story = stories.getOrNull(index) ?: return
+        likeBusy = true
+        Api.call("POST", "/api/stories/${story.id}/like") { ok, json, err ->
+            runOnUiThread {
+                likeBusy = false
+                if (!ok || json == null) {
+                    Ui.toast(this, err ?: "Like could not be saved")
+                    return@runOnUiThread
+                }
+                val updated = story.copy(
+                    likeCount = json.optInt("like_count", story.likeCount),
+                    likedByMe = json.optBoolean("liked", story.likedByMe)
+                )
+                stories = stories.toMutableList().also { it[index] = updated }
+                updateLikeButton(updated)
+            }
+        }
+    }
+
+    /** A story comment goes straight to the story owner as a DM. */
+    private fun sendStoryReply() {
+        if (commentBusy) return
+        val a = author ?: return
+        val text = etStoryComment.text.toString().trim()
+        if (text.isEmpty()) return
+        commentBusy = true
+        val body = JSONObject().put("body", "📸 Story reply: $text")
+        Api.call("POST", "/api/dm/${a.id}", body) { ok, _, err ->
+            runOnUiThread {
+                commentBusy = false
+                if (ok) {
+                    etStoryComment.setText("")
+                    etStoryComment.clearFocus()
+                    (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                        .hideSoftInputFromWindow(etStoryComment.windowToken, 0)
+                    Ui.toast(this, "Reply sent as DM ✓")
+                } else {
+                    Ui.toast(this, err ?: "Reply could not be sent")
+                }
+            }
+        }
+    }
+
+    private fun confirmDeleteStory() {
+        val story = stories.getOrNull(index) ?: return
+        AlertDialog.Builder(this)
+            .setTitle("Delete story?")
+            .setMessage("Story delete karni hai? Ye wapas nahi aayegi.")
+            .setPositiveButton("Delete") { _, _ -> deleteStory(story.id) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun deleteStory(storyId: Int) {
+        stopTimers()
+        Api.call("DELETE", "/api/stories/$storyId") { ok, _, err ->
+            runOnUiThread {
+                if (!ok) {
+                    Ui.toast(this, err ?: "Story could not be deleted")
+                    startTimers()
+                    return@runOnUiThread
+                }
+                val remaining = stories.filter { it.id != storyId }
+                stories = remaining
+                if (remaining.isEmpty()) {
+                    Ui.toast(this, "Story deleted")
+                    finish()
+                    return@runOnUiThread
+                }
+                Ui.toast(this, "Story deleted")
+                show(index.coerceIn(0, remaining.size - 1))
+            }
+        }
+    }
+
     private fun startTimers() {
+        // Never auto-advance while the user is typing a story reply.
+        if (::etStoryComment.isInitialized && etStoryComment.hasFocus()) return
         stopTimers()
         progress = 0
         pbStory.progress = 0

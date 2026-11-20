@@ -31,6 +31,7 @@ from .models import (
     PostComment,
     PostLike,
     Story,
+    StoryLike,
     StoryView,
     User,
 )
@@ -45,8 +46,8 @@ Base.metadata.create_all(bind=engine)
 
 
 def _migrate_user_columns():
-    """Add users.avatar_url / users.music_url on databases created before
-    those columns existed.
+    """Add users.avatar_url / users.music_url / users.last_seen_at on
+    databases created before those columns existed.
 
     create_all() only creates missing TABLES, never missing columns, so a
     database built by an older version would 500 on every user response
@@ -61,11 +62,16 @@ def _migrate_user_columns():
                         conn.execute(
                             text(f"ALTER TABLE users ADD COLUMN {col} VARCHAR(512) DEFAULT ''")
                         )
+                if "last_seen_at" not in cols:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN last_seen_at DATETIME"))
             else:
                 for col in ("avatar_url", "music_url"):
                     conn.execute(
                         text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col} VARCHAR(512) DEFAULT ''")
                     )
+                conn.execute(
+                    text("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP")
+                )
     except Exception:
         # Never crash startup over a migration; the columns exist in every
         # database built by the current code, so this is belt-and-braces.
@@ -109,7 +115,20 @@ def get_current_user(
     user = db.query(User).get(user_id)
     if not user:
         raise HTTPException(status_code=401, detail="Account not found")
+    # Presence: every authenticated request proves the user is active now.
+    # Cheap at this scale; the DM/chat pollers keep an open screen "online".
+    user.last_seen_at = now_naive()
+    db.commit()
     return user
+
+
+ONLINE_WINDOW_SECONDS = 120
+
+
+def is_online(u: User) -> bool:
+    if u.last_seen_at is None:
+        return False
+    return (now_naive() - u.last_seen_at).total_seconds() <= ONLINE_WINDOW_SECONDS
 
 
 def counts(db: Session, user_id: int):
@@ -138,6 +157,8 @@ def user_out(u: User, me_id: int, db: Session) -> dict:
         "followers_count": followers,
         "following_count": following,
         "followed_by_me": followed,
+        "online": is_online(u),
+        "last_seen_at": iso(u.last_seen_at),
         "created_at": iso(u.created_at),
     }
 
@@ -149,6 +170,13 @@ def story_out(s: Story, me_id: int, db: Session) -> dict:
         .first()
         is not None
     )
+    like_count = db.query(StoryLike).filter(StoryLike.story_id == s.id).count()
+    liked = (
+        db.query(StoryLike)
+        .filter(StoryLike.story_id == s.id, StoryLike.user_id == me_id)
+        .first()
+        is not None
+    )
     return {
         "id": s.id,
         "user_id": s.user_id,
@@ -157,6 +185,8 @@ def story_out(s: Story, me_id: int, db: Session) -> dict:
         "image_url": s.image_url or "",
         "bg_color": s.bg_color or "#5B21B6",
         "viewed_by_me": viewed,
+        "like_count": like_count,
+        "liked_by_me": liked,
         "created_at": iso(s.created_at),
         "expires_at": iso(s.expires_at),
     }
@@ -701,6 +731,46 @@ def story_viewers(story_id: int, db: Session = Depends(get_db),
         if u:
             out.append({**user_out(u, user.id, db), "viewed_at": iso(v.viewed_at)})
     return out
+
+
+@app.post("/api/stories/{story_id}/like")
+def toggle_story_like(story_id: int, db: Session = Depends(get_db),
+                      user: User = Depends(get_current_user)):
+    story = db.query(Story).get(story_id)
+    if not story:
+        raise HTTPException(status_code=404, detail="Story not found")
+    existing = (
+        db.query(StoryLike)
+        .filter(StoryLike.story_id == story_id, StoryLike.user_id == user.id)
+        .first()
+    )
+    if existing:
+        db.delete(existing)
+        liked = False
+    else:
+        db.add(StoryLike(story_id=story_id, user_id=user.id))
+        liked = True
+    db.commit()
+    count = db.query(StoryLike).filter(StoryLike.story_id == story_id).count()
+    return {"liked": liked, "like_count": count}
+
+
+@app.delete("/api/stories/{story_id}")
+def delete_story(story_id: int, db: Session = Depends(get_db),
+                 user: User = Depends(get_current_user)):
+    story = db.query(Story).get(story_id)
+    if not story:
+        raise HTTPException(status_code=404, detail="Story not found")
+    if story.user_id != user.id:
+        raise HTTPException(status_code=403, detail="You can only delete your own stories")
+    # Clean up everything pointing at it; highlights skip missing stories,
+    # so a deleted story simply disappears from any highlight it was in.
+    db.query(StoryLike).filter(StoryLike.story_id == story_id).delete()
+    db.query(StoryView).filter(StoryView.story_id == story_id).delete()
+    db.query(HighlightStory).filter(HighlightStory.story_id == story_id).delete()
+    db.delete(story)
+    db.commit()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

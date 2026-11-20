@@ -28,6 +28,8 @@ class User(Base):
     bio = Column(String(200), default="")
     avatar_url = Column(String(512), default="")
     music_url = Column(String(512), default="")
+    # Last authenticated request — drives the online/offline presence dot.
+    last_seen_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow, nullable=False)
 
 
@@ -65,6 +67,16 @@ class StoryView(Base):
     viewer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     viewed_at = Column(DateTime, default=utcnow, nullable=False)
     __table_args__ = (UniqueConstraint("story_id", "viewer_id", name="uq_story_view"),)
+
+
+class StoryLike(Base):
+    """One user liking one story (toggle)."""
+    __tablename__ = "story_likes"
+    id = Column(Integer, primary_key=True, index=True)
+    story_id = Column(Integer, ForeignKey("stories.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    __table_args__ = (UniqueConstraint("story_id", "user_id", name="uq_story_like"),)
 
 
 class Post(Base):

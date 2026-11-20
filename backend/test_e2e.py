@@ -327,6 +327,65 @@ def main():
                        body={"name": "Khaali", "story_ids": []})
     check("highlight needs at least one story", s == 400, f"{s} {hl_empty}")
 
+    print("== presence (online/offline) + story likes + story delete ==")
+    s, prof_on = call("GET", f"/api/users/{priya_id}", token=token_a)
+    check("profile shows priya online (recent request)",
+          s == 200 and prof_on.get("online") is True
+          and prof_on.get("last_seen_at"), f"{s} {prof_on}")
+    con = sqlite3.connect(DB_PATH)
+    con.execute("UPDATE users SET last_seen_at = datetime('now', '-10 minutes') "
+                "WHERE id = ?", (priya_id,))
+    con.commit()
+    con.close()
+    s, prof_off = call("GET", f"/api/users/{priya_id}", token=token_a)
+    check("profile shows priya offline (last seen 10 min ago)",
+          s == 200 and prof_off.get("online") is False, f"{s} {prof_off}")
+    call("GET", "/api/auth/me", token=token_p)  # priya acts again -> online
+    s, prof_on2 = call("GET", f"/api/users/{priya_id}", token=token_a)
+    check("profile shows priya online again after she acts",
+          s == 200 and prof_on2.get("online") is True, f"{s} {prof_on2}")
+
+    s, slike = call("POST", f"/api/stories/{story_id}/like", token=token_a)
+    check("ayan likes priya story", s == 200 and slike.get("liked") is True
+          and slike.get("like_count") == 1, f"{s} {slike}")
+    s, slike2 = call("POST", f"/api/stories/{story_id}/like", token=token_a)
+    check("story like toggle off", s == 200 and slike2.get("liked") is False
+          and slike2.get("like_count") == 0, f"{s} {slike2}")
+    call("POST", f"/api/stories/{story_id}/like", token=token_a)
+    s, stories_l = call("GET", "/api/stories", token=token_a)
+    pg = next((g for g in stories_l if g["user"]["username"] == "priya"), None)
+    check("story list shows like_count + liked_by_me",
+          s == 200 and pg is not None and pg["stories"][0].get("like_count") == 1
+          and pg["stories"][0].get("liked_by_me") is True, f"{s} {stories_l}")
+    s, slike_ghost = call("POST", "/api/stories/99999/like", token=token_a)
+    check("like on nonexistent story is 404", s == 404, f"{s}")
+
+    s, story3 = call("POST", "/api/stories", token=token_a,
+                     body={"image_url": img_url})
+    check("ayan creates a story to delete", s == 200 and story3.get("id"),
+          f"{s} {story3}")
+    story3_id = story3["id"]
+    s, del_no = call("DELETE", f"/api/stories/{story3_id}", token=token_p)
+    check("cannot delete someone else's story", s == 403, f"{s} {del_no}")
+    s, hl3 = call("POST", "/api/highlights", token=token_a,
+                  body={"name": "To Delete", "story_ids": [story3_id]})
+    check("highlight from story3 created", s == 200 and hl3.get("id"), f"{s} {hl3}")
+    hl3_id = hl3["id"]
+    s, del_yes = call("DELETE", f"/api/stories/{story3_id}", token=token_a)
+    check("owner deletes own story", s == 200, f"{s} {del_yes}")
+    s, hl3_after = call("GET", f"/api/highlights/{hl3_id}", token=token_a)
+    check("highlight skips the deleted story (empty, count 0)",
+          s == 200 and hl3_after.get("stories") == []
+          and hl3_after.get("story_count") == 0, f"{s} {hl3_after}")
+    s, del_gone = call("DELETE", f"/api/stories/{story3_id}", token=token_a)
+    check("deleted story delete again is 404", s == 404, f"{s} {del_gone}")
+    s, stories3 = call("GET", "/api/stories", token=token_r)
+    check("deleted story gone from list (no ayan group)",
+          s == 200 and not any(g["user"]["username"] == "ayan" for g in stories3),
+          f"{s} {stories3}")
+    s, del_ghost = call("DELETE", "/api/stories/99999", token=token_a)
+    check("delete nonexistent story is 404", s == 404, f"{s}")
+
     print("== delete own post ==")
     s, dele = call("DELETE", f"/api/posts/{post2_id}", token=token_p)
     check("cannot delete someone else's post", s == 403, f"{s} {dele}")
@@ -366,6 +425,10 @@ def main():
     s, unread2 = call("GET", "/api/dm/unread", token=token_p)
     check("unread is 0 after read", s == 200 and unread2.get("unread") == 0,
           f"{s} {unread2}")
+    s, thread_read = call("GET", f"/api/dm/{priya_id}", token=token_a)
+    check("sender sees read_at set after recipient reads",
+          s == 200 and len(thread_read) == 1
+          and thread_read[0].get("read_at"), f"{s} {thread_read}")
     s, dm2 = call("POST", f"/api/dm/{ayan_id}", token=token_p,
                   body={"body": "Hi Ayan, wapas!"})
     check("priya replies", s == 200 and dm2.get("body") == "Hi Ayan, wapas!",

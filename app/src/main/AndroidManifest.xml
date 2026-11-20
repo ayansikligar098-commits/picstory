@@ -30,6 +30,7 @@
         <activity android:name=".HomeActivity" android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden" />
         <activity android:name=".StoryViewerActivity" android:exported="false"
+            android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|keyboardHidden" />
         <activity android:name=".CreateStoryActivity" android:exported="false"
             android:windowSoftInputMode="adjustResize"

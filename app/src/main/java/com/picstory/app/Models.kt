@@ -13,6 +13,8 @@ data class User(
     val followersCount: Int,
     val followingCount: Int,
     val followedByMe: Boolean,
+    val online: Boolean,
+    val lastSeenAt: String?,
     val createdAt: String?
 ) {
     companion object {
@@ -27,6 +29,8 @@ data class User(
             followersCount = o.optInt("followers_count"),
             followingCount = o.optInt("following_count"),
             followedByMe = o.optBoolean("followed_by_me"),
+            online = o.optBoolean("online"),
+            lastSeenAt = o.optString("last_seen_at").takeIf { it.isNotEmpty() },
             createdAt = o.optString("created_at").takeIf { it.isNotEmpty() }
         )
     }
@@ -40,6 +44,8 @@ data class StoryItem(
     val imageUrl: String,
     val bgColor: String,
     val viewedByMe: Boolean,
+    val likeCount: Int,
+    val likedByMe: Boolean,
     val createdAt: String,
     val expiresAt: String
 ) {
@@ -52,6 +58,8 @@ data class StoryItem(
             imageUrl = o.optString("image_url"),
             bgColor = o.optString("bg_color", "#5B21B6"),
             viewedByMe = o.optBoolean("viewed_by_me"),
+            likeCount = o.optInt("like_count"),
+            likedByMe = o.optBoolean("liked_by_me"),
             createdAt = o.optString("created_at"),
             expiresAt = o.optString("expires_at")
         )

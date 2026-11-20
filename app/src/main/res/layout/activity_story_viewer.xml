@@ -91,6 +91,16 @@
             </LinearLayout>
 
             <Button
+                android:id="@+id/btnDeleteStory"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="@android:color/transparent"
+                android:text="🗑"
+                android:textColor="@color/white"
+                android:textSize="18sp"
+                android:visibility="gone" />
+
+            <Button
                 android:id="@+id/btnClose"
                 android:layout_width="44dp"
                 android:layout_height="44dp"
@@ -109,5 +119,50 @@
             android:textColor="@color/white"
             android:textSize="13sp"
             android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- Bottom bar: like + reply (other people's stories only). -->
+    <LinearLayout
+        android:id="@+id/storyBottomBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="12dp"
+        android:visibility="gone">
+
+        <Button
+            android:id="@+id/btnLike"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:background="@android:color/transparent"
+            android:text="♡ 0"
+            android:textColor="@color/white"
+            android:textSize="18sp" />
+
+        <EditText
+            android:id="@+id/etStoryComment"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:background="@drawable/edit_bg"
+            android:hint="Reply to story…"
+            android:inputType="text"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:textColor="@color/white"
+            android:textColorHint="#CCFFFFFF" />
+
+        <Button
+            android:id="@+id/btnSendStoryComment"
+            android:layout_width="52dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/btn_primary"
+            android:text="➤"
+            android:textColor="@color/white"
+            android:textSize="18sp" />
     </LinearLayout>
 </FrameLayout>

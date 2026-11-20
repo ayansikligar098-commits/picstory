@@ -29,8 +29,10 @@ class DmChatActivity : Activity() {
     private var lastCount = -1
     private lateinit var lvMessages: ListView
     private lateinit var etMessage: EditText
+    private lateinit var vPresenceDot: View
     private val pollHandler = Handler(Looper.getMainLooper())
     private var pollRunnable: Runnable? = null
+    private var presenceRunnable: Runnable? = null
 
     private val adapter = object : BaseAdapter() {
         override fun getCount() = messages.size
@@ -40,17 +42,22 @@ class DmChatActivity : Activity() {
             val v = cv ?: LayoutInflater.from(this@DmChatActivity)
                 .inflate(R.layout.item_dm_message, parent, false)
             val m = messages[pos]
-            val row = v.findViewById<LinearLayout>(R.id.msgRow)
+            val bubbleRow = v.findViewById<LinearLayout>(R.id.msgBubbleRow)
             val tvBody = v.findViewById<TextView>(R.id.tvBody)
+            val tvStatus = v.findViewById<TextView>(R.id.tvStatus)
             tvBody.text = m.body
             if (m.senderId == Prefs.myUserId) {
-                row.gravity = Gravity.END
+                bubbleRow.gravity = Gravity.END
                 tvBody.setBackgroundResource(R.drawable.btn_primary)
                 tvBody.setTextColor(resources.getColor(R.color.white, theme))
+                // Seen receipt: the other person has read this message.
+                tvStatus.visibility = View.VISIBLE
+                tvStatus.text = if (m.readAt != null) "✓✓ Seen" else "✓ Sent"
             } else {
-                row.gravity = Gravity.START
+                bubbleRow.gravity = Gravity.START
                 tvBody.setBackgroundResource(R.drawable.edit_bg)
                 tvBody.setTextColor(resources.getColor(R.color.textPrimary, theme))
+                tvStatus.visibility = View.GONE
             }
             return v
         }
@@ -73,6 +80,7 @@ class DmChatActivity : Activity() {
 
         lvMessages = findViewById(R.id.lvMessages)
         etMessage = findViewById(R.id.etMessage)
+        vPresenceDot = findViewById(R.id.vPresenceDot)
         lvMessages.adapter = adapter
 
         val tvAvatar = findViewById<TextView>(R.id.tvAvatar)
@@ -93,6 +101,7 @@ class DmChatActivity : Activity() {
         super.onResume()
         markRead()
         loadThread()
+        loadPresence()
         startPolling()
     }
 
@@ -111,11 +120,35 @@ class DmChatActivity : Activity() {
         }
         pollRunnable = r
         pollHandler.postDelayed(r, 5_000)
+        val pr = object : Runnable {
+            override fun run() {
+                loadPresence()
+                pollHandler.postDelayed(this, 20_000)
+            }
+        }
+        presenceRunnable = pr
+        pollHandler.postDelayed(pr, 20_000)
     }
 
     private fun stopPolling() {
         pollRunnable?.let { pollHandler.removeCallbacks(it) }
         pollRunnable = null
+        presenceRunnable?.let { pollHandler.removeCallbacks(it) }
+        presenceRunnable = null
+    }
+
+    /** Green dot = the other person is online now, red = offline. */
+    private fun loadPresence() {
+        Api.call("GET", "/api/users/$userId") { ok, json, _ ->
+            runOnUiThread {
+                if (!ok || json == null) return@runOnUiThread
+                val online = try { User.fromJson(json).online } catch (e: Exception) { return@runOnUiThread }
+                vPresenceDot.visibility = View.VISIBLE
+                vPresenceDot.setBackgroundResource(
+                    if (online) R.drawable.dot_green else R.drawable.dot_red
+                )
+            }
+        }
     }
 
     private fun loadThread() {
