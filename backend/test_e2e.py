@@ -141,6 +141,10 @@ def main():
     print("== upload ==")
     s, up = upload_png(token_a)
     check("image upload", s == 200 and up.get("url", "").startswith("/media/"), f"{s} {up}")
+    # v2.4: with no CLOUDINARY_* env vars the upload MUST stay local —
+    # a /media/ URL proves the Cloudinary branch did not trigger.
+    check("upload fallback is local /media/ (no Cloudinary env)",
+          up.get("url", "").startswith("/media/"), f"{up}")
     img_url = up.get("url", "")
     s, badup = call("POST", "/api/upload", token=token_a, raw=b"hello",
                     headers={"Content-Type": "text/plain"})

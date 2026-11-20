@@ -1,5 +1,7 @@
 """PicStory backend — FastAPI app: auth, follow, photo posts, stories, highlights."""
+import os
 import re
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -532,8 +534,55 @@ def list_following(user_id: int, db: Session = Depends(get_db),
 
 
 # ---------------------------------------------------------------------------
-# Uploads
+# Uploads — local disk by default; Cloudinary when configured (v2.4)
 # ---------------------------------------------------------------------------
+def _cloudinary_configured() -> bool:
+    """True only when ALL THREE Cloudinary credentials are set. Any one
+    missing means local-storage fallback — never a half-configured upload."""
+    return all(
+        os.environ.get(k)
+        for k in (
+            "CLOUDINARY_CLOUD_NAME",
+            "CLOUDINARY_API_KEY",
+            "CLOUDINARY_API_SECRET",
+        )
+    )
+
+
+def _upload_to_cloudinary(data: bytes, ext: str) -> str:
+    """Upload bytes to Cloudinary (folder "picstory") and return the secure
+    URL. resource_type="auto" covers images, video and audio. The SDK is
+    imported lazily so the local fallback never depends on it. The API
+    secret is used only by cloudinary.config() and is never logged or
+    returned."""
+    import cloudinary
+    import cloudinary.uploader
+
+    cloudinary.config(
+        cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+        api_key=os.environ["CLOUDINARY_API_KEY"],
+        api_secret=os.environ["CLOUDINARY_API_SECRET"],
+        secure=True,
+    )
+    # Upload from a temp file (not raw bytes) so Cloudinary can infer the
+    # format from the extension — that is what makes video/audio land in
+    # the right resource type with a playable URL.
+    suffix = f".{ext}" if ext else ""
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(data)
+        tmp_path = tmp.name
+    try:
+        result = cloudinary.uploader.upload(
+            tmp_path, folder="picstory", resource_type="auto",
+        )
+    finally:
+        os.unlink(tmp_path)
+    url = result.get("secure_url") or result.get("url")
+    if not url:
+        raise RuntimeError("Cloudinary upload returned no URL")
+    return url
+
+
 @app.post("/api/upload")
 async def upload(
     file: UploadFile = File(...),
@@ -566,6 +615,17 @@ async def upload(
     data = await file.read()
     if len(data) > max_mb * 1024 * 1024:
         raise HTTPException(status_code=400, detail=f"File is too big (max {max_mb} MB)")
+    if _cloudinary_configured():
+        # Cloud storage: the file lives on Cloudinary, so it survives
+        # Render restarts/redeploys. On failure return 502 (retryable) —
+        # never silently fall back to local disk, which would split media
+        # across two stores and lose the file on the next restart anyway.
+        try:
+            return {"url": _upload_to_cloudinary(data, ext)}
+        except Exception:
+            raise HTTPException(
+                status_code=502, detail="Media upload failed, please try again"
+            )
     name = f"{uuid.uuid4().hex}.{ext}"
     (STORAGE_DIR / name).write_bytes(data)
     return {"url": f"/media/{name}"}

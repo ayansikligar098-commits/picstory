@@ -11,10 +11,17 @@
 #
 # FREE-TIER LIMITS (read before you rely on this):
 # - Free web service: 512 MB RAM, spins down after 15 min idle (~50 s cold
-#   start). This backend is light (FastAPI + SQLite, no video work),
-#   so it should fit.
-# - NO persistent disk on free services: accounts, follows, posts, stories,
-#   highlights and uploaded photos are LOST on every restart / redeploy.
+#   start). This backend is light (FastAPI, no video work), so it should fit.
+# - NO persistent disk on free services. By default the app uses a local
+#   SQLite file + local storage/ uploads, which are LOST on every restart /
+#   redeploy. v2.4 adds the permanent fix, both FREE:
+#     * DATABASE_URL = a Supabase (free) Postgres URL -> accounts, posts,
+#       follows, DMs survive every restart/redeploy.
+#     * CLOUDINARY_CLOUD_NAME / CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET
+#       (free Cloudinary account) -> uploaded photos/videos/audio survive.
+#   All four are sync:false, i.e. managed in the Render dashboard — the
+#   blueprint will never overwrite them. Until they are set, the app keeps
+#   the old local behaviour (and still wipes on restart).
 # - No push notifications (no FCM).
 # - Temporary test only. Do NOT upload private photos.
 services:
@@ -29,6 +36,12 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: DATABASE_URL
-        value: sqlite:///./picstory.db
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
       - key: PYTHONUNBUFFERED
         value: "1"
