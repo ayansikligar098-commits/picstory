@@ -524,15 +524,27 @@ class HomeActivity : Activity() {
 
     private fun buildStoryRow() {
         storyRow.removeAllViews()
-        // "Your story" circle first.
+        // "Your story" circle first. Ring follows the same rules as every
+        // other circle: red while I have an unseen story, white once I have
+        // watched all of mine, NO ring at all when I have no active story.
+        val myGroup = storyGroups.firstOrNull { it.user.id == Prefs.myUserId }
         val addView = LayoutInflater.from(this).inflate(R.layout.item_story_circle, storyRow, false)
         val addAvatar = addView.findViewById<TextView>(R.id.tvAvatar)
         val addPhoto = addView.findViewById<ImageView>(R.id.ivAvatar)
         Ui.setAvatarPhoto(addPhoto, addAvatar, Prefs.myAvatarUrl,
             Prefs.myDisplayName.ifEmpty { Prefs.myUsername }, Prefs.myUsername)
         addView.findViewById<TextView>(R.id.tvName).text = "Your story"
-        addView.findViewById<View>(R.id.vRing)
-            .setBackgroundResource(R.drawable.story_ring_seen)
+        val addRing = addView.findViewById<View>(R.id.vRing)
+        if (myGroup == null || myGroup.stories.isEmpty()) {
+            addRing.visibility = View.GONE
+        } else {
+            addRing.visibility = View.VISIBLE
+            val unviewed = myGroup.stories.count { !it.viewedByMe }
+            addRing.setBackgroundResource(
+                if (unviewed == 0) R.drawable.story_ring_seen
+                else R.drawable.story_ring_new
+            )
+        }
         addView.setOnClickListener {
             startActivity(Intent(this, CreateStoryActivity::class.java))
         }
@@ -545,11 +557,21 @@ class HomeActivity : Activity() {
             val ring = v.findViewById<View>(R.id.vRing)
             Ui.setAvatarPhoto(ivAvatar, tvAvatar, group.user)
             tvName.text = if (group.user.id == Prefs.myUserId) "Your story" else group.user.displayName
-            val unviewed = group.stories.count { !it.viewedByMe }
-            ring.setBackgroundResource(
-                if (group.user.id == Prefs.myUserId || unviewed == 0) R.drawable.story_ring_seen
-                else R.drawable.story_ring_new
-            )
+            // Instagram-style ring, from the server's viewed_by_me flag:
+            // red = at least one story unseen, white = all seen,
+            // no ring = no active story (cannot normally happen here —
+            // the list only carries groups with active stories — but
+            // be safe and hide it rather than showing a stale ring).
+            if (group.stories.isEmpty()) {
+                ring.visibility = View.GONE
+            } else {
+                ring.visibility = View.VISIBLE
+                val unviewed = group.stories.count { !it.viewedByMe }
+                ring.setBackgroundResource(
+                    if (unviewed == 0) R.drawable.story_ring_seen
+                    else R.drawable.story_ring_new
+                )
+            }
             v.setOnClickListener {
                 startActivity(
                     Intent(this, StoryViewerActivity::class.java)
