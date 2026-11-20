@@ -83,10 +83,14 @@
             android:scaleType="centerCrop"
             android:visibility="gone" />
 
+        <!-- v3.5: layout_gravity center — a landscape Reel measured
+             small and sat at the top of the 260dp frame; centered it
+             shows whole, in the middle of the frame. -->
         <VideoView
             android:id="@+id/vvVideo"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
+            android:layout_gravity="center"
             android:visibility="gone" />
 
         <TextView

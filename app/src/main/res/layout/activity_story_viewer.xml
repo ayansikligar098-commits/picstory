@@ -12,11 +12,18 @@
         android:scaleType="fitCenter" />
 
     <!-- Video stories: same full-screen area as the photo view.
-         Auto-plays with sound; the timer follows the video's length. -->
+         Auto-plays with sound; the timer follows the video's length.
+         v3.5: layout_gravity center — VideoView measures itself to the
+         video's aspect ratio and FrameLayout otherwise pins it to the
+         top-left, so a landscape video sat as a strip at the top with
+         the rest of the screen black. Centered, the whole video shows
+         in the middle (Instagram-style), fully visible. A 9:16 video
+         still fills the screen, so nothing changes for it. -->
     <VideoView
         android:id="@+id/vvStory"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:layout_gravity="center"
         android:clickable="true"
         android:visibility="gone" />
 

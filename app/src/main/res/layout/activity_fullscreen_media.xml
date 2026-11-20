@@ -11,10 +11,14 @@
         android:scaleType="fitCenter"
         android:visibility="gone" />
 
+    <!-- v3.5: layout_gravity center — same VideoView top-pinning as the
+         story viewer: a landscape video measured small and sat at the
+         top; centered it shows whole, in the middle. -->
     <VideoView
         android:id="@+id/vvFullVideo"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:layout_gravity="center"
         android:visibility="gone" />
 
     <Button

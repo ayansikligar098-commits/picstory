@@ -22,8 +22,8 @@ android {
         applicationId = "com.picstory.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 23
-        versionName = "3.4"
+        versionCode = 24
+        versionName = "3.5"
     }
 
     signingConfigs {
