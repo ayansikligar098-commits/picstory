@@ -1,5 +1,7 @@
 # Secrets / local-only — never commit these.
 .env
+keystore/
+keystore.properties
 .venv/
 *.db
 # Uploaded chat photos (local test data).

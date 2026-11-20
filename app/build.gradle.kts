@@ -1,6 +1,17 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+// Persistent signing: the Android debug keystore lives at /root/.android and
+// is wiped whenever the VM is replaced, which breaks installing updates
+// ("package conflicts"). Debug builds are signed with this project's own
+// keystore in keystore/ (never committed; passwords in keystore.properties).
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) load(f.inputStream())
 }
 
 android {
@@ -11,11 +22,23 @@ android {
         applicationId = "com.picstory.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 6
-        versionName = "1.5"
+        versionCode = 7
+        versionName = "1.6"
+    }
+
+    signingConfigs {
+        create("persistent") {
+            storeFile = rootProject.file("keystore/picstory.keystore")
+            storePassword = keystoreProps.getProperty("storePassword")
+            keyAlias = keystoreProps.getProperty("keyAlias")
+            keyPassword = keystoreProps.getProperty("keyPassword")
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("persistent")
+        }
         release {
             isMinifyEnabled = false
         }
