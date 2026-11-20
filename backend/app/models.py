@@ -139,8 +139,11 @@ class Message(Base):
 
 class Notification(Base):
     """In-app notification for one user. type: follow | post_like |
-    post_comment | story_like | story_reply | dm. ref_id points at the
-    post/story when there is one, else the actor's user id for dm/story_reply."""
+    post_comment | story_like. ref_id points at the post/story when there
+    is one, else the actor's user id. v2.3: 'dm' and 'story_reply' rows are
+    no longer created (DMs show only in the DM badge) and are excluded from
+    the heart-centre list/unread-count (see DM_NOTIFICATION_TYPES in
+    main.py); legacy rows of those types may still sit in the table."""
     __tablename__ = "notifications"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)

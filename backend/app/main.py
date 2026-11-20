@@ -936,13 +936,21 @@ def delete_highlight(highlight_id: int, db: Session = Depends(get_db),
 # ---------------------------------------------------------------------------
 # Notifications (in-app only — no push/Firebase in v2.0)
 # ---------------------------------------------------------------------------
+# v2.3: DM-type notifications never belong in the heart centre — DMs live
+# only in the bottom paper-plane badge (GET /api/dm/unread, driven by
+# read_at). Rows of these types, including legacy ones created before v2.3,
+# are hidden from the list and the unread count below.
+DM_NOTIFICATION_TYPES = ("dm", "story_reply")
+
+
 @app.get("/api/notifications")
 def list_notifications(limit: int = Query(50, ge=1, le=100),
                         db: Session = Depends(get_db),
                         user: User = Depends(get_current_user)):
     rows = (
         db.query(Notification)
-        .filter(Notification.user_id == user.id)
+        .filter(Notification.user_id == user.id,
+                ~Notification.type.in_(DM_NOTIFICATION_TYPES))
         .order_by(Notification.created_at.desc(), Notification.id.desc())
         .limit(limit).all()
     )
@@ -955,7 +963,8 @@ def notifications_unread_count(db: Session = Depends(get_db),
     total = (
         db.query(Notification)
         .filter(Notification.user_id == user.id,
-                Notification.is_read.is_(False))
+                Notification.is_read.is_(False),
+                ~Notification.type.in_(DM_NOTIFICATION_TYPES))
         .count()
     )
     return {"unread": total}
@@ -1063,25 +1072,13 @@ def send_dm(user_id: int, body: DmIn, db: Session = Depends(get_db),
         raise HTTPException(
             status_code=400, detail="Message is too long (max 2000 characters)")
     conv = get_or_create_conversation(db, user.id, user_id)
-    # DM notification: one per conversation until the recipient reads it,
-    # so a chatty sender does not spam the notifications list.
-    already_unread = (
-        db.query(Message)
-        .filter(Message.conversation_id == conv.id,
-                Message.sender_id == user.id,
-                Message.read_at.is_(None))
-        .count()
-    )
+    # v2.3: DMs (and story replies, which arrive as DMs) NEVER create a
+    # heart notification — a DM shows only in the bottom paper-plane badge
+    # (GET /api/dm/unread, driven by read_at, not by this table).
     msg = Message(conversation_id=conv.id, sender_id=user.id, body=text,
                   media_url=media_url, media_kind=media_kind)
     conv.updated_at = now_naive()
     db.add(msg)
-    if text.startswith("📸 Story reply:"):
-        notify(db, user_id, user, "story_reply", user.id,
-               f"{user.display_name} replied to your story")
-    elif already_unread == 0:
-        notify(db, user_id, user, "dm", user.id,
-               f"{user.display_name} sent you a message")
     db.commit()
     db.refresh(msg)
     return message_out(msg)

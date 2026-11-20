@@ -579,34 +579,68 @@ def main():
     s, ndm1 = call("POST", f"/api/dm/{nina_id}", token=token_a,
                    body={"body": "Hi Nina!"})
     check("ayan DMs nina", s == 200 and ndm1.get("id"), f"{s} {ndm1}")
+    # v2.3 (a): a DM must NOT create a heart notification.
     ok, _ = nina_has("dm", "ayan_new")
-    check("nina got a dm notification", ok)
-    check("nina unread count is 5", nina_unread() == 5, f"{nina_unread()}")
+    check("v2.3: NO dm notification after DM", not ok)
+    check("v2.3: heart unread count still 4 after DM",
+          nina_unread() == 4, f"{nina_unread()}")
+    # v2.3 (b): the DM itself must still show in the DM badge.
+    s, dmu = call("GET", "/api/dm/unread", token=token_n)
+    check("v2.3: DM badge unread is 1 after DM",
+          s == 200 and dmu.get("unread") == 1, f"{s} {dmu}")
     s, ndm2 = call("POST", f"/api/dm/{nina_id}", token=token_a,
                    body={"body": "Aur batao?"})
     check("ayan DMs nina again", s == 200 and ndm2.get("id"), f"{s} {ndm2}")
-    check("no second dm notification while first is unread (still 5)",
-          nina_unread() == 5, f"{nina_unread()}")
+    check("v2.3: heart unread count still 4 after second DM",
+          nina_unread() == 4, f"{nina_unread()}")
     s, ndm3 = call("POST", f"/api/dm/{nina_id}", token=token_a,
                    body={"body": "📸 Story reply: mast story!"})
     check("ayan sends a story-reply DM", s == 200 and ndm3.get("id"), f"{s} {ndm3}")
     ok, _ = nina_has("story_reply", "ayan_new")
-    check("nina got a story_reply notification", ok)
-    check("nina unread count is 6", nina_unread() == 6, f"{nina_unread()}")
+    check("v2.3: NO story_reply notification (it is a DM)", not ok)
+    check("v2.3: heart unread count still 4 after story-reply DM",
+          nina_unread() == 4, f"{nina_unread()}")
+    s, dmu = call("GET", "/api/dm/unread", token=token_n)
+    check("v2.3: DM badge unread is 3 after all three DMs",
+          s == 200 and dmu.get("unread") == 3, f"{s} {dmu}")
     s, nlist = call("GET", "/api/notifications", token=token_n)
     check("notifications list newest first, actor included",
-          s == 200 and len(nlist) == 6 and nlist[0].get("type") == "story_reply"
+          s == 200 and len(nlist) == 4 and nlist[0].get("type") == "story_like"
           and nlist[0].get("actor", {}).get("username") == "ayan_new", f"{s} {nlist}")
     follow_notif = next((n for n in nlist if n.get("type") == "follow"), None)
     s, rd_one = call("POST", f"/api/notifications/{follow_notif['id']}/read", token=token_n)
     check("mark one notification read", s == 200, f"{s} {rd_one}")
-    check("nina unread count is 5 after marking one read",
-          nina_unread() == 5, f"{nina_unread()}")
+    check("nina unread count is 3 after marking one read",
+          nina_unread() == 3, f"{nina_unread()}")
     s, rd_all = call("POST", "/api/notifications/read", token=token_n)
-    check("mark all notifications read", s == 200 and rd_all.get("read") == 5,
+    check("mark all notifications read", s == 200 and rd_all.get("read") == 3,
           f"{s} {rd_all}")
     check("nina unread count is 0 after mark-all-read", nina_unread() == 0,
           f"{nina_unread()}")
+    # v2.3 (e): legacy dm/story_reply rows must stay out of the heart centre.
+    import datetime
+    _con = sqlite3.connect(DB_PATH)
+    _cur = _con.cursor()
+    _now = datetime.datetime.utcnow().isoformat()
+    _cur.execute(
+        "INSERT INTO notifications (user_id, actor_id, type, ref_id, body,"
+        " is_read, created_at) VALUES (?, ?, 'dm', ?, 'legacy dm', 0, ?)",
+        (nina_id, ayan_id, ayan_id, _now))
+    _cur.execute(
+        "INSERT INTO notifications (user_id, actor_id, type, ref_id, body,"
+        " is_read, created_at) VALUES (?, ?, 'story_reply', ?, 'legacy reply', 0, ?)",
+        (nina_id, ayan_id, ayan_id, _now))
+    _con.commit()
+    s, nlist2 = call("GET", "/api/notifications", token=token_n)
+    check("v2.3: legacy dm/story_reply rows excluded from list",
+          s == 200 and all(n.get("type") not in ("dm", "story_reply")
+                           for n in nlist2), f"{s} {nlist2}")
+    check("v2.3: legacy dm/story_reply rows excluded from unread count",
+          nina_unread() == 0, f"{nina_unread()}")
+    _cur.execute("DELETE FROM notifications WHERE user_id = ?"
+                 " AND type IN ('dm', 'story_reply')", (nina_id,))
+    _con.commit()
+    _con.close()
     s, rd_ghost = call("POST", "/api/notifications/99999/read", token=token_n)
     check("mark nonexistent notification read is 404", s == 404, f"{s}")
     s, rd_other = call("POST", f"/api/notifications/{follow_notif['id']}/read",
