@@ -22,9 +22,11 @@ from sqlalchemy.orm import Session
 
 from .db import Base, engine, get_db
 from .models import (
+    Conversation,
     Follow,
     Highlight,
     HighlightStory,
+    Message,
     Post,
     PostComment,
     PostLike,
@@ -245,6 +247,11 @@ class PostIn(BaseModel):
 
 class CommentIn(BaseModel):
     text: str = Field(..., min_length=1, max_length=500)
+
+
+class DmIn(BaseModel):
+    # Validated by hand in the handler (empty / too long -> 400, not 422).
+    body: str = ""
 
 
 class HighlightIn(BaseModel):
@@ -758,6 +765,156 @@ def delete_highlight(highlight_id: int, db: Session = Depends(get_db),
     db.delete(h)
     db.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# DMs (1:1 text messages)
+# ---------------------------------------------------------------------------
+@app.get("/api/dm/conversations")
+def list_dm_conversations(db: Session = Depends(get_db),
+                          user: User = Depends(get_current_user)):
+    convs = (
+        db.query(Conversation)
+        .filter(or_(Conversation.user1_id == user.id,
+                    Conversation.user2_id == user.id))
+        .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
+        .all()
+    )
+    out = []
+    for c in convs:
+        other_id = c.user2_id if c.user1_id == user.id else c.user1_id
+        other = db.query(User).get(other_id)
+        if not other:
+            continue
+        last = (
+            db.query(Message)
+            .filter(Message.conversation_id == c.id)
+            .order_by(Message.id.desc())
+            .first()
+        )
+        unread = (
+            db.query(Message)
+            .filter(Message.conversation_id == c.id,
+                    Message.sender_id == other_id,
+                    Message.read_at.is_(None))
+            .count()
+        )
+        out.append({
+            "user": user_out(other, user.id, db),
+            "last_message": last.body if last else "",
+            "last_message_at": iso(last.created_at) if last else None,
+            "unread_count": unread,
+        })
+    return out
+
+
+@app.get("/api/dm/unread")
+def dm_unread_count(db: Session = Depends(get_db),
+                    user: User = Depends(get_current_user)):
+    total = (
+        db.query(Message)
+        .join(Conversation, Message.conversation_id == Conversation.id)
+        .filter(or_(Conversation.user1_id == user.id,
+                    Conversation.user2_id == user.id),
+                Message.sender_id != user.id,
+                Message.read_at.is_(None))
+        .count()
+    )
+    return {"unread": total}
+
+
+@app.post("/api/dm/{user_id}")
+def send_dm(user_id: int, body: DmIn, db: Session = Depends(get_db),
+            user: User = Depends(get_current_user)):
+    if user_id == user.id:
+        raise HTTPException(status_code=400, detail="You cannot message yourself")
+    other = db.query(User).get(user_id)
+    if not other:
+        raise HTTPException(status_code=404, detail="User not found")
+    text = (body.body or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+    if len(text) > 2000:
+        raise HTTPException(
+            status_code=400, detail="Message is too long (max 2000 characters)")
+    conv = get_or_create_conversation(db, user.id, user_id)
+    msg = Message(conversation_id=conv.id, sender_id=user.id, body=text)
+    conv.updated_at = now_naive()
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+    return message_out(msg)
+
+
+@app.get("/api/dm/{user_id}")
+def get_dm_thread(user_id: int, db: Session = Depends(get_db),
+                  user: User = Depends(get_current_user)):
+    other = db.query(User).get(user_id)
+    if not other:
+        raise HTTPException(status_code=404, detail="User not found")
+    conv = find_conversation(db, user.id, user_id)
+    if not conv:
+        return []
+    msgs = (
+        db.query(Message)
+        .filter(Message.conversation_id == conv.id)
+        .order_by(Message.id.desc())
+        .limit(100)
+        .all()
+    )
+    msgs.reverse()
+    return [message_out(m) for m in msgs]
+
+
+@app.post("/api/dm/{user_id}/read")
+def mark_dm_read(user_id: int, db: Session = Depends(get_db),
+                 user: User = Depends(get_current_user)):
+    other = db.query(User).get(user_id)
+    if not other:
+        raise HTTPException(status_code=404, detail="User not found")
+    conv = find_conversation(db, user.id, user_id)
+    if not conv:
+        return {"ok": True, "read": 0}
+    read = (
+        db.query(Message)
+        .filter(Message.conversation_id == conv.id,
+                Message.sender_id == user_id,
+                Message.read_at.is_(None))
+        .update({Message.read_at: now_naive()}, synchronize_session=False)
+    )
+    db.commit()
+    return {"ok": True, "read": read}
+
+
+def message_out(m: Message) -> dict:
+    return {
+        "id": m.id,
+        "conversation_id": m.conversation_id,
+        "sender_id": m.sender_id,
+        "body": m.body,
+        "created_at": iso(m.created_at),
+        "read_at": iso(m.read_at),
+    }
+
+
+def find_conversation(db: Session, me_id: int, other_id: int):
+    u1, u2 = (me_id, other_id) if me_id < other_id else (other_id, me_id)
+    return (
+        db.query(Conversation)
+        .filter(Conversation.user1_id == u1, Conversation.user2_id == u2)
+        .first()
+    )
+
+
+def get_or_create_conversation(db: Session, me_id: int, other_id: int) -> Conversation:
+    conv = find_conversation(db, me_id, other_id)
+    if not conv:
+        u1, u2 = (me_id, other_id) if me_id < other_id else (other_id, me_id)
+        conv = Conversation(user1_id=u1, user2_id=u2)
+        db.add(conv)
+        db.commit()
+        db.refresh(conv)
+    return conv
 
 
 if __name__ == "__main__":

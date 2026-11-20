@@ -1,5 +1,9 @@
 package com.picstory.app
 
+import android.content.Context
+import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
@@ -20,12 +24,68 @@ import java.util.concurrent.TimeUnit
  */
 object Api {
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
+        // Render Free sleeps after 15 min idle and takes ~50s to wake up,
+        // so a 30s read timeout killed the very first request after a nap.
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
     val http: OkHttpClient get() = client
+
+    /**
+     * Set once from MainActivity / HomeActivity onCreate: an application
+     * context (never an Activity, so nothing leaks) used only to route
+     * back to the login screen when the saved session is dead.
+     */
+    var appContext: Context? = null
+
+    /**
+     * Called on the UI thread when a saved session gets a 401 (e.g. the
+     * free server's database was wiped and the account no longer exists).
+     * Set from MainActivity / HomeActivity; if unset, the fallback in
+     * handleUnauthorized() still routes via appContext.
+     */
+    var onUnauthorized: (() -> Unit)? = null
+
+    private var lastUnauthorizedAt = 0L
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * Central 401 handling, used by every request method below: clear the
+     * stale auth once, then route to AuthActivity on the UI thread.
+     * Guarded two ways so a storm of parallel 401s only fires once:
+     * after the first call the token is gone (so later calls return
+     * early), and a 5-second window swallows duplicates.
+     * A failed login must NOT trigger this — it has no saved token yet,
+     * so the token check returns early and the login error is shown.
+     */
+    private fun handleUnauthorized() {
+        if (Prefs.token.isNullOrEmpty()) return
+        val now = System.currentTimeMillis()
+        synchronized(this) {
+            if (now - lastUnauthorizedAt < 5000) return
+            lastUnauthorizedAt = now
+        }
+        Prefs.clearAuth()
+        val cb = onUnauthorized
+        val ctx = appContext
+        mainHandler.post {
+            try {
+                if (cb != null) {
+                    cb()
+                } else if (ctx != null) {
+                    val intent = Intent(ctx, AuthActivity::class.java)
+                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TASK
+                    ctx.startActivity(intent)
+                }
+            } catch (e: Exception) {
+                // Routing must never crash the app; MainActivity routes to
+                // Auth on the next launch anyway (token is already cleared).
+            }
+        }
+    }
 
     fun base(): String = Prefs.baseUrl.trimEnd('/')
 
@@ -73,6 +133,7 @@ object Api {
                     if (resp.isSuccessful) {
                         cb(true, parsed, null)
                     } else {
+                        if (resp.code == 401) handleUnauthorized()
                         cb(false, parsed, parsed.optString("detail", "Server error ${resp.code}"))
                     }
                 }
@@ -96,6 +157,7 @@ object Api {
                     if (resp.isSuccessful) {
                         cb(true, JSONArray(body), null)
                     } else {
+                        if (resp.code == 401) handleUnauthorized()
                         val parsed = try { JSONObject(body) } catch (e: Exception) { JSONObject() }
                         cb(false, null, parsed.optString("detail", "Server error ${resp.code}"))
                     }
@@ -124,6 +186,7 @@ object Api {
                     if (resp.isSuccessful) {
                         cb(true, JSONObject(text).optString("url"), null)
                     } else {
+                        if (resp.code == 401) handleUnauthorized()
                         cb(false, null, "Upload failed (${resp.code})")
                     }
                 }
@@ -153,6 +216,7 @@ object Api {
                     if (resp.isSuccessful) {
                         cb(true, JSONObject(text).optString("url"), null)
                     } else {
+                        if (resp.code == 401) handleUnauthorized()
                         val detail = try {
                             JSONObject(text).optString("detail", "")
                         } catch (e: Exception) {

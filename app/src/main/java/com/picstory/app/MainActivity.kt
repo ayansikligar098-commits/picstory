@@ -10,6 +10,16 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         Prefs.init(this)
         ThemeHelper.apply(this)
+        // Global stale-session handling: a 401 means the saved account no
+        // longer exists on the server (e.g. free-server DB wipe) — Api
+        // clears the token and routes here, to the login screen.
+        Api.appContext = applicationContext
+        Api.onUnauthorized = {
+            val intent = Intent(applicationContext, AuthActivity::class.java)
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TASK
+            applicationContext.startActivity(intent)
+        }
         if (Prefs.loggedIn) {
             startActivity(Intent(this, HomeActivity::class.java))
         } else {

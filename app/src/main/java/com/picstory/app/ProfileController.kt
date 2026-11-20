@@ -32,6 +32,7 @@ class ProfileController(
     private val tvFollowersCount: TextView = root.findViewById(R.id.tvFollowersCount)
     private val tvFollowingCount: TextView = root.findViewById(R.id.tvFollowingCount)
     private val btnFollow: Button = root.findViewById(R.id.btnFollow)
+    private val btnMessage: Button = root.findViewById(R.id.btnMessage)
     private val btnEditProfile: Button = root.findViewById(R.id.btnEditProfile)
     private val btnMusic: Button = root.findViewById(R.id.btnMusic)
     private val btnNewHighlight: Button = root.findViewById(R.id.btnNewHighlight)
@@ -67,6 +68,7 @@ class ProfileController(
         ivAvatar.setOnClickListener { maybePickAvatar() }
         btnMusic.setOnClickListener { toggleMusic() }
         btnFollow.setOnClickListener { toggleFollow() }
+        btnMessage.setOnClickListener { openDm() }
         btnEditProfile.setOnClickListener { showEditProfile() }
         btnNewHighlight.setOnClickListener {
             activity.startActivity(Intent(activity, CreateHighlightActivity::class.java))
@@ -105,6 +107,18 @@ class ProfileController(
         Api.call("GET", "/api/users/$userId") { ok, json, err ->
             activity.runOnUiThread {
                 if (!ok || json == null) {
+                    // Broken profile must still offer a way out: Settings
+                    // and Log Out are gone by default and only appear on a
+                    // successful load, which traps a user with a stale
+                    // token (e.g. after a server DB wipe) on this screen
+                    // with no way to log out. Show them for my own profile
+                    // even when the profile itself cannot load. (A 401
+                    // also routes to the login screen via Api — this is
+                    // the fallback for any other failure.)
+                    if (userId == Prefs.myUserId) {
+                        btnSettings.visibility = View.VISIBLE
+                        btnLogout.visibility = View.VISIBLE
+                    }
                     Ui.toast(activity, err ?: "Profile could not be opened")
                     return@runOnUiThread
                 }
@@ -126,6 +140,7 @@ class ProfileController(
                 tvFollowingCount.text = u.followingCount.toString()
                 val own = u.id == Prefs.myUserId
                 btnFollow.visibility = if (own) View.GONE else View.VISIBLE
+                btnMessage.visibility = if (own) View.GONE else View.VISIBLE
                 btnEditProfile.visibility = if (own) View.VISIBLE else View.GONE
                 btnNewHighlight.visibility = if (own) View.VISIBLE else View.GONE
                 btnSettings.visibility = if (own) View.VISIBLE else View.GONE
@@ -144,6 +159,18 @@ class ProfileController(
             activity.resources.getColor(
                 if (u.followedByMe) R.color.textPrimary else R.color.white, activity.theme
             )
+        )
+    }
+
+    /** Open a 1:1 DM chat with the user on screen (other users only). */
+    private fun openDm() {
+        val u = user ?: return
+        activity.startActivity(
+            Intent(activity, DmChatActivity::class.java)
+                .putExtra("user_id", u.id)
+                .putExtra("display_name", u.displayName)
+                .putExtra("username", u.username)
+                .putExtra("avatar_url", u.avatarUrl)
         )
     }
 
@@ -562,9 +589,6 @@ class ProfileController(
         val view = LayoutInflater.from(activity).inflate(R.layout.dialog_settings, null)
         val etServer = view.findViewById<EditText>(R.id.etServerUrl)
         etServer.setText(Prefs.baseUrl)
-        val btnSystem = view.findViewById<Button>(R.id.btnThemeSystem)
-        val btnLight = view.findViewById<Button>(R.id.btnThemeLight)
-        val btnDark = view.findViewById<Button>(R.id.btnThemeDark)
         val btnSave = view.findViewById<Button>(R.id.btnSaveServer)
         val btnLogoutInSettings = view.findViewById<Button>(R.id.btnLogoutSettings)
         val dlg = AlertDialog.Builder(activity)
@@ -572,21 +596,6 @@ class ProfileController(
             .setView(view)
             .setNegativeButton("Close", null)
             .create()
-        fun markTheme() {
-            for ((b, t) in listOf(btnSystem to "system", btnLight to "light", btnDark to "dark")) {
-                val active = Prefs.theme == t
-                b.setBackgroundResource(if (active) R.drawable.btn_primary else R.drawable.edit_bg)
-                b.setTextColor(
-                    activity.resources.getColor(
-                        if (active) R.color.white else R.color.textPrimary, activity.theme
-                    )
-                )
-            }
-        }
-        markTheme()
-        btnSystem.setOnClickListener { Prefs.theme = "system"; ThemeHelper.apply(activity); activity.recreate(); dlg.dismiss() }
-        btnLight.setOnClickListener { Prefs.theme = "light"; ThemeHelper.apply(activity); activity.recreate(); dlg.dismiss() }
-        btnDark.setOnClickListener { Prefs.theme = "dark"; ThemeHelper.apply(activity); activity.recreate(); dlg.dismiss() }
         btnSave.setOnClickListener {
             val url = etServer.text.toString().trim().trimEnd('/')
             if (!url.startsWith("http://") && !url.startsWith("https://")) {

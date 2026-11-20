@@ -115,6 +115,42 @@ data class Comment(
     }
 }
 
+data class DmMessage(
+    val id: Int,
+    val conversationId: Int,
+    val senderId: Int,
+    val body: String,
+    val createdAt: String?,
+    val readAt: String?
+) {
+    companion object {
+        fun fromJson(o: JSONObject): DmMessage = DmMessage(
+            id = o.optInt("id"),
+            conversationId = o.optInt("conversation_id"),
+            senderId = o.optInt("sender_id"),
+            body = o.optString("body"),
+            createdAt = o.optString("created_at").takeIf { it.isNotEmpty() },
+            readAt = o.optString("read_at").takeIf { it.isNotEmpty() }
+        )
+    }
+}
+
+data class DmConversation(
+    val user: User,
+    val lastMessage: String,
+    val lastMessageAt: String?,
+    val unreadCount: Int
+) {
+    companion object {
+        fun fromJson(o: JSONObject): DmConversation = DmConversation(
+            user = User.fromJson(o.getJSONObject("user")),
+            lastMessage = o.optString("last_message"),
+            lastMessageAt = o.optString("last_message_at").takeIf { it.isNotEmpty() },
+            unreadCount = o.optInt("unread_count")
+        )
+    }
+}
+
 data class Highlight(
     val id: Int,
     val userId: Int,

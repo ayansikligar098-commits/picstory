@@ -6,14 +6,11 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.text.Editable
-import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
 import android.widget.Button
-import android.widget.EditText
 import android.widget.GridView
 import android.widget.ImageButton
 import android.widget.ImageView
@@ -35,12 +32,12 @@ class HomeActivity : Activity() {
     private lateinit var tvEmptyFeed: TextView
     private lateinit var tvStatus: TextView
     private lateinit var storyRow: LinearLayout
-    private lateinit var etSearch: EditText
     private lateinit var lvUsers: ListView
     private lateinit var tvNoUsers: TextView
     private lateinit var gvExplore: GridView
     private lateinit var tvEmptyExplore: TextView
     private lateinit var btnRefresh: Button
+    private lateinit var vUnreadDot: View
     private lateinit var navProfileAvatar: TextView
     private lateinit var navProfilePhoto: ImageView
 
@@ -52,8 +49,9 @@ class HomeActivity : Activity() {
     private var profileController: ProfileController? = null
     private var lastBackPress = 0L
     private val likeBusyIds = mutableSetOf<Int>()
-    private val searchHandler = Handler(Looper.getMainLooper())
-    private var searchRunnable: Runnable? = null
+    // Unread-DM polling (refreshes the red dot on the Messages icon).
+    private val unreadHandler = Handler(Looper.getMainLooper())
+    private var unreadRunnable: Runnable? = null
 
     private val feedAdapter = object : BaseAdapter() {
         override fun getCount() = feed.size
@@ -154,6 +152,16 @@ class HomeActivity : Activity() {
         super.onCreate(savedInstanceState)
         Prefs.init(this)
         ThemeHelper.apply(this)
+        // Global stale-session handling (same as MainActivity): a 401
+        // clears the saved token and routes to the login screen, so the
+        // app never stays on a dead home/profile screen.
+        Api.appContext = applicationContext
+        Api.onUnauthorized = {
+            val intent = Intent(applicationContext, AuthActivity::class.java)
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TASK
+            applicationContext.startActivity(intent)
+        }
         setContentView(R.layout.activity_home)
 
         tabHome = findViewById(R.id.tabHome)
@@ -163,12 +171,12 @@ class HomeActivity : Activity() {
         tvEmptyFeed = findViewById(R.id.tvEmptyFeed)
         tvStatus = findViewById(R.id.tvStatus)
         storyRow = findViewById(R.id.storyRow)
-        etSearch = findViewById(R.id.etSearch)
         lvUsers = findViewById(R.id.lvUsers)
         tvNoUsers = findViewById(R.id.tvNoUsers)
         gvExplore = findViewById(R.id.gvExplore)
         tvEmptyExplore = findViewById(R.id.tvEmptyExplore)
         btnRefresh = findViewById(R.id.btnRefresh)
+        vUnreadDot = findViewById(R.id.vUnreadDot)
 
         lvFeed.adapter = feedAdapter
         lvUsers.adapter = userAdapter
@@ -176,12 +184,15 @@ class HomeActivity : Activity() {
 
         findViewById<ImageButton>(R.id.navHome).setOnClickListener { showTab(0) }
         findViewById<ImageButton>(R.id.navExplore).setOnClickListener { showTab(1) }
-        findViewById<ImageButton>(R.id.navCreate).setOnClickListener { showCreateChooser() }
+        findViewById<View>(R.id.navMessages).setOnClickListener {
+            startActivity(Intent(this, DmListActivity::class.java))
+        }
         findViewById<View>(R.id.navProfile).setOnClickListener { showTab(3) }
         navProfileAvatar = findViewById(R.id.navProfileAvatar)
         navProfilePhoto = findViewById(R.id.ivNavProfilePhoto)
         updateNavProfile()
         btnRefresh.setOnClickListener { loadHome() }
+        findViewById<Button>(R.id.btnCreate).setOnClickListener { showCreateChooser() }
 
         lvFeed.setOnItemClickListener { _, _, pos, _ -> openPostDetail(feed[pos].id) }
         lvUsers.setOnItemClickListener { _, _, pos, _ ->
@@ -189,18 +200,6 @@ class HomeActivity : Activity() {
                 .putExtra("user_id", searchResults[pos].id))
         }
         gvExplore.setOnItemClickListener { _, _, pos, _ -> openPostDetail(explorePosts[pos].id) }
-
-        etSearch.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                searchRunnable?.let { searchHandler.removeCallbacks(it) }
-                val q = s?.toString()?.trim() ?: ""
-                val r = Runnable { searchUsers(q) }
-                searchRunnable = r
-                searchHandler.postDelayed(r, 400)
-            }
-        })
 
         profileController = ProfileController(this, tabProfile, Prefs.myUserId)
 
@@ -213,8 +212,9 @@ class HomeActivity : Activity() {
                 .setTitle("Welcome to 70a! 📸")
                 .setMessage(
                     "• Home: stories + photos from people you follow\n" +
-                    "• Explore: all photos, and search for people to follow\n" +
-                    "• ✈ : share a photo post or a 24-hour story\n" +
+                    "• Explore: all photos, and everyone to follow\n" +
+                    "• ✈ (bottom bar): your messages — tap ✉ on someone's profile to start a DM\n" +
+                    "• + (top right): share a photo post or a 24-hour story\n" +
                     "• Profile: your photos, highlights and settings\n\n" +
                     "Tip: if the app can't reach the server, check the Server URL in Settings — your phone needs the server's public link, not localhost."
                 )
@@ -226,6 +226,8 @@ class HomeActivity : Activity() {
     override fun onResume() {
         super.onResume()
         updateNavProfile()
+        refreshUnread()
+        startUnreadPolling()
         when (currentTab) {
             0 -> loadHome()
             1 -> loadExplore()
@@ -236,6 +238,7 @@ class HomeActivity : Activity() {
     override fun onPause() {
         // Profile music must not keep playing once the app is left.
         profileController?.stopMusic()
+        stopUnreadPolling()
         super.onPause()
     }
 
@@ -263,8 +266,36 @@ class HomeActivity : Activity() {
             .setColorFilter(if (currentTab == 0) selected else muted)
         findViewById<ImageView>(R.id.navExplore)
             .setColorFilter(if (currentTab == 1) selected else muted)
-        findViewById<ImageView>(R.id.navCreate).setColorFilter(selected)
+        // Messages is an action (opens the DM list), not a tab — always muted.
+        findViewById<ImageView>(R.id.ivNavMessages).setColorFilter(muted)
         navProfileAvatar.alpha = if (currentTab == 3) 1.0f else 0.55f
+    }
+
+    /** Red dot on the Messages icon while any DM is unread. */
+    private fun refreshUnread() {
+        Api.call("GET", "/api/dm/unread") { ok, json, _ ->
+            runOnUiThread {
+                val n = if (ok && json != null) json.optInt("unread") else 0
+                vUnreadDot.visibility = if (n > 0) View.VISIBLE else View.GONE
+            }
+        }
+    }
+
+    private fun startUnreadPolling() {
+        stopUnreadPolling()
+        val r = object : Runnable {
+            override fun run() {
+                refreshUnread()
+                unreadHandler.postDelayed(this, 30_000)
+            }
+        }
+        unreadRunnable = r
+        unreadHandler.postDelayed(r, 30_000)
+    }
+
+    private fun stopUnreadPolling() {
+        unreadRunnable?.let { unreadHandler.removeCallbacks(it) }
+        unreadRunnable = null
     }
 
     override fun onBackPressed() {
@@ -398,7 +429,7 @@ class HomeActivity : Activity() {
                 } else {
                     setStatus("Couldn't connect — tap ↻ to retry")
                     tvEmptyFeed.visibility = View.VISIBLE
-                    tvEmptyFeed.text = "Couldn't load your feed.\nCheck your connection or Server URL in Settings."
+                    tvEmptyFeed.text = "Couldn't load your feed.\nServer jag raha hai, 30–60 second me retry karo."
                     lvFeed.visibility = View.GONE
                 }
             }
@@ -423,7 +454,7 @@ class HomeActivity : Activity() {
             }
         }
         // Default user list (empty query = everyone).
-        searchUsers(etSearch.text.toString().trim())
+        searchUsers("")
     }
 
     private fun searchUsers(q: String) {

@@ -94,6 +94,31 @@ class PostComment(Base):
     created_at = Column(DateTime, default=utcnow, nullable=False)
 
 
+class Conversation(Base):
+    """1:1 DM thread. user1_id is always the smaller id, so each pair has
+    exactly one row (enforced by the unique pair constraint)."""
+    __tablename__ = "conversations"
+    id = Column(Integer, primary_key=True, index=True)
+    user1_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    user2_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, nullable=False)
+    __table_args__ = (
+        UniqueConstraint("user1_id", "user2_id", name="uq_conversation_pair"),
+    )
+
+
+class Message(Base):
+    """One DM text. read_at is null until the recipient marks it read."""
+    __tablename__ = "dm_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id"), nullable=False, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    body = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    read_at = Column(DateTime, nullable=True)
+
+
 class Highlight(Base):
     """A named collection of the owner's stories (active or expired)."""
     __tablename__ = "highlights"

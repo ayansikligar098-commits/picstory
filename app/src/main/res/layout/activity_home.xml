@@ -51,6 +51,17 @@
             android:text="↻"
             android:textColor="@color/textPrimary"
             android:textSize="18sp" />
+
+        <Button
+            android:id="@+id/btnCreate"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/btn_primary"
+            android:text="+"
+            android:textColor="@color/white"
+            android:textSize="20sp"
+            android:textStyle="bold" />
     </LinearLayout>
 
     <View
@@ -106,7 +117,7 @@
             android:visibility="gone" />
     </LinearLayout>
 
-    <!-- Explore tab: search + grid -->
+    <!-- Explore tab: photo grid + full user list (no search bar) -->
     <LinearLayout
         android:id="@+id/tabExplore"
         android:layout_width="match_parent"
@@ -114,19 +125,6 @@
         android:layout_weight="1"
         android:orientation="vertical"
         android:visibility="gone">
-
-        <EditText
-            android:id="@+id/etSearch"
-            android:layout_width="match_parent"
-            android:layout_height="52dp"
-            android:layout_margin="12dp"
-            android:background="@drawable/edit_bg"
-            android:hint="@string/search_users"
-            android:inputType="text"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp"
-            android:textColor="@color/textPrimary"
-            android:textColorHint="@color/textSecondary" />
 
         <ListView
             android:id="@+id/lvUsers"
@@ -206,15 +204,38 @@
             android:scaleType="centerInside"
             android:src="@drawable/ic_nav_search" />
 
-        <ImageButton
-            android:id="@+id/navCreate"
+        <!-- Messages (paper plane). The red dot shows while DMs are unread. -->
+        <FrameLayout
+            android:id="@+id/navMessages"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
             android:background="?android:attr/selectableItemBackground"
-            android:contentDescription="Create"
-            android:scaleType="centerInside"
-            android:src="@drawable/ic_nav_send" />
+            android:contentDescription="Messages">
+
+            <FrameLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center">
+
+                <ImageButton
+                    android:id="@+id/ivNavMessages"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:background="@android:color/transparent"
+                    android:contentDescription="Messages"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/ic_nav_send" />
+
+                <View
+                    android:id="@+id/vUnreadDot"
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:layout_gravity="top|end"
+                    android:background="@drawable/dot_red"
+                    android:visibility="gone" />
+            </FrameLayout>
+        </FrameLayout>
 
         <FrameLayout
             android:id="@+id/navProfile"

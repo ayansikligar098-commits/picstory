@@ -337,6 +337,67 @@ def main():
     s, feed3 = call("GET", "/api/posts", token=token_a)
     check("feed has 1 post left", s == 200 and len(feed3) == 1, f"{s} {feed3}")
 
+    print("== DMs ==")
+    s, unread0 = call("GET", "/api/dm/unread", token=token_p)
+    check("unread starts at 0", s == 200 and unread0.get("unread") == 0,
+          f"{s} {unread0}")
+    s, dm1 = call("POST", f"/api/dm/{priya_id}", token=token_a,
+                  body={"body": "Hi Priya! 👋"})
+    check("ayan sends DM to priya",
+          s == 200 and dm1.get("body") == "Hi Priya! 👋"
+          and dm1.get("sender_id") == ayan_id, f"{s} {dm1}")
+    s, unread1 = call("GET", "/api/dm/unread", token=token_p)
+    check("priya unread is 1", s == 200 and unread1.get("unread") == 1,
+          f"{s} {unread1}")
+    s, convs = call("GET", "/api/dm/conversations", token=token_p)
+    check("priya conversations show ayan, unread 1",
+          s == 200 and len(convs) == 1 and convs[0]["user"]["username"] == "ayan"
+          and convs[0]["unread_count"] == 1
+          and convs[0]["last_message"] == "Hi Priya! 👋", f"{s} {convs}")
+    s, thread = call("GET", f"/api/dm/{ayan_id}", token=token_p)
+    check("priya reads thread (1 message)",
+          s == 200 and len(thread) == 1 and thread[0]["body"] == "Hi Priya! 👋",
+          f"{s} {thread}")
+    s, unread_still = call("GET", "/api/dm/unread", token=token_p)
+    check("unread still 1 until marked read",
+          s == 200 and unread_still.get("unread") == 1, f"{s} {unread_still}")
+    s, rd = call("POST", f"/api/dm/{ayan_id}/read", token=token_p)
+    check("mark thread read", s == 200 and rd.get("read") == 1, f"{s} {rd}")
+    s, unread2 = call("GET", "/api/dm/unread", token=token_p)
+    check("unread is 0 after read", s == 200 and unread2.get("unread") == 0,
+          f"{s} {unread2}")
+    s, dm2 = call("POST", f"/api/dm/{ayan_id}", token=token_p,
+                  body={"body": "Hi Ayan, wapas!"})
+    check("priya replies", s == 200 and dm2.get("body") == "Hi Ayan, wapas!",
+          f"{s} {dm2}")
+    s, thread2 = call("GET", f"/api/dm/{priya_id}", token=token_a)
+    check("thread has both messages, oldest first",
+          s == 200 and len(thread2) == 2 and thread2[0]["body"] == "Hi Priya! 👋"
+          and thread2[1]["body"] == "Hi Ayan, wapas!", f"{s} {thread2}")
+    s, convs_a = call("GET", "/api/dm/conversations", token=token_a)
+    check("ayan conversations show priya with unread 1",
+          s == 200 and len(convs_a) == 1
+          and convs_a[0]["user"]["username"] == "priya"
+          and convs_a[0]["unread_count"] == 1
+          and convs_a[0]["last_message"] == "Hi Ayan, wapas!", f"{s} {convs_a}")
+    s, self_dm = call("POST", f"/api/dm/{ayan_id}", token=token_a,
+                      body={"body": "hello me"})
+    check("DM to self is 400", s == 400, f"{s}")
+    s, empty_dm = call("POST", f"/api/dm/{priya_id}", token=token_a,
+                       body={"body": "   "})
+    check("empty DM is 400", s == 400, f"{s}")
+    s, long_dm = call("POST", f"/api/dm/{priya_id}", token=token_a,
+                      body={"body": "x" * 2001})
+    check("DM over 2000 chars is 400", s == 400, f"{s}")
+    s, ghost_dm = call("POST", "/api/dm/99999", token=token_a, body={"body": "hi"})
+    check("DM to nonexistent user is 404", s == 404, f"{s}")
+    s, ghost_thread = call("GET", "/api/dm/99999", token=token_a)
+    check("thread with nonexistent user is 404", s == 404, f"{s}")
+    s, noauth_dm = call("POST", f"/api/dm/{priya_id}", body={"body": "hi"})
+    check("unauthenticated DM is 401", s == 401, f"{s}")
+    s, noauth_unread = call("GET", "/api/dm/unread")
+    check("unauthenticated unread is 401", s == 401, f"{s}")
+
     print("== username change ==")
     s, rn = call("PATCH", "/api/users/me", token=token_a, body={"username": "ayan_new"})
     check("change own username", s == 200 and rn.get("username") == "ayan_new",

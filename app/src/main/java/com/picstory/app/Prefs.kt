@@ -13,11 +13,11 @@ object Prefs {
     fun init(ctx: Context) {
         if (!::sp.isInitialized) {
             sp = ctx.applicationContext.getSharedPreferences(NAME, Context.MODE_PRIVATE)
-            // Black-theme fix: installs from v1.1 stored the old default
-            // theme "system", so the v1.2 default never applied and the app
-            // stayed light. Migrate that stored "system" to "dark" once;
-            // anyone who picked light/dark in Settings keeps their choice.
-            if (sp.getString("theme", null) == "system") {
+            // Dark-only (v1.5): any theme stored by an older version
+            // ("system" / "light") is migrated to "dark" once, so an
+            // existing install also turns black. The theme buttons are
+            // gone from Settings, so nothing can pick light again.
+            if (sp.getString("theme", null) != "dark") {
                 sp.edit().putString("theme", "dark").apply()
             }
         }

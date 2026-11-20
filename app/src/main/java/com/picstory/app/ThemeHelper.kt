@@ -1,45 +1,21 @@
 package com.picstory.app
 
 import android.app.Activity
-import android.app.UiModeManager
-import android.content.res.Configuration
-import android.os.Build
 
-/** Applies the user's theme choice (system / light / dark). */
+/**
+ * 70a is dark-only since v1.5. The old approach (UiModeManager.setNightMode
+ * on API 31+, Configuration mutation below it) never applied the
+ * values-night palette on the user's phone — screenshots stayed light —
+ * and AppCompat (the proper fix) is not available in the offline build
+ * mirror, so activities cannot migrate to AppCompatActivity.
+ *
+ * Instead the palette itself is dark: values/colors.xml carries the black
+ * palette, and the base theme is the dark Material theme, so a fresh
+ * install renders black with light text whatever the system theme is.
+ * apply() is kept (every activity calls it) but is now a deliberate no-op.
+ */
 object ThemeHelper {
     fun apply(activity: Activity) {
-        when (Prefs.theme) {
-            "light" -> setNight(activity, false)
-            "dark" -> setNight(activity, true)
-            else -> setNight(activity, null)
-        }
-    }
-
-    private fun setNight(activity: Activity, night: Boolean?) {
-        try {
-            if (Build.VERSION.SDK_INT >= 31) {
-                val um = activity.getSystemService(UiModeManager::class.java)
-                um?.nightMode = when (night) {
-                    true -> UiModeManager.MODE_NIGHT_YES
-                    false -> UiModeManager.MODE_NIGHT_NO
-                    else -> UiModeManager.MODE_NIGHT_AUTO
-                }
-            } else {
-                // Pre-31: mutate the app configuration (best effort; falls
-                // back to the system theme if the device ignores it).
-                val res = activity.resources
-                val conf = Configuration(res.configuration)
-                val mode = when (night) {
-                    true -> Configuration.UI_MODE_NIGHT_YES
-                    false -> Configuration.UI_MODE_NIGHT_NO
-                    else -> Configuration.UI_MODE_NIGHT_UNDEFINED
-                }
-                conf.uiMode = (conf.uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or mode
-                @Suppress("DEPRECATION")
-                res.updateConfiguration(conf, res.displayMetrics)
-            }
-        } catch (e: Exception) {
-            // Theme failures must never crash the app.
-        }
+        // Dark-only: nothing to switch. Kept so call sites stay unchanged.
     }
 }
