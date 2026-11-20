@@ -33,12 +33,13 @@ object Prefs {
         set(v) = sp.edit().putString("display_name", v).apply()
 
     /**
-     * Server base URL — changeable on the login screen and in Settings
-     * (the phone cannot reach localhost). This is the ONLY place the
-     * default URL string lives; everything else goes through here.
+     * Server base URL — changeable on the login screen and in Settings.
+     * Default is the public Render backend so the app works directly
+     * from the phone. This is the ONLY place the default URL string
+     * lives; everything else goes through here.
      */
     var baseUrl: String
-        get() = sp.getString("base_url", "http://127.0.0.1:8000") ?: "http://127.0.0.1:8000"
+        get() = sp.getString("base_url", "https://picstory-backend.onrender.com") ?: "https://picstory-backend.onrender.com"
         set(v) = sp.edit().putString("base_url", v.trim().trimEnd('/')).apply()
 
     /** "system" | "light" | "dark" */
