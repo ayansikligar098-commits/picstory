@@ -46,6 +46,19 @@ class Follow(Base):
     )
 
 
+class Block(Base):
+    """blocker_id blocked blocked_id. Blocking also removes follows in
+    both directions (done by the block endpoint, not by the model)."""
+    __tablename__ = "blocks"
+    id = Column(Integer, primary_key=True, index=True)
+    blocker_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    blocked_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    __table_args__ = (
+        UniqueConstraint("blocker_id", "blocked_id", name="uq_block"),
+    )
+
+
 class Story(Base):
     """Photo or video story — expires 24h after posting (server-enforced).
     Video stories are capped at 59s (enforced client-side at pick time;

@@ -749,6 +749,114 @@ def main():
                             body={"caption": "no media at all"})
     check("post with neither photo nor video is 400", s == 400, f"{s}")
 
+    print("== block / unblock (v3.1) ==")
+    s, vikram = call("POST", "/api/auth/register",
+                     body={"username": "vikram", "display_name": "Vikram Singh",
+                           "password": "pass1234"})
+    check("register vikram", s == 200 and "token" in vikram, f"{s} {vikram}")
+    token_v = vikram.get("token")
+    vikram_id = vikram["user"]["id"]
+    s, meera = call("POST", "/api/auth/register",
+                    body={"username": "meera", "display_name": "Meera Joshi",
+                          "password": "pass1234"})
+    check("register meera", s == 200 and "token" in meera, f"{s} {meera}")
+    token_m = meera.get("token")
+    meera_id = meera["user"]["id"]
+    s, fol_vm = call("POST", f"/api/users/{meera_id}/follow", token=token_v)
+    check("vikram follows meera", s == 200 and fol_vm.get("following") is True,
+          f"{s} {fol_vm}")
+    s, fol_mv = call("POST", f"/api/users/{vikram_id}/follow", token=token_m)
+    check("meera follows vikram", s == 200 and fol_mv.get("following") is True,
+          f"{s} {fol_mv}")
+    s, mpost = call("POST", "/api/posts", token=token_m,
+                    body={"caption": "Meera ki photo", "image_url": img_url})
+    check("meera creates a post", s == 200 and mpost.get("id"), f"{s} {mpost}")
+    mpost_id = mpost["id"]
+    s, mstory = call("POST", "/api/stories", token=token_m,
+                     body={"image_url": img_url})
+    check("meera creates a story", s == 200 and mstory.get("id"), f"{s} {mstory}")
+    s, feed_v = call("GET", "/api/posts", token=token_v)
+    check("vikram feed shows meera post before block",
+          s == 200 and any(p["id"] == mpost_id for p in feed_v), f"{s} {feed_v}")
+    s, stories_v = call("GET", "/api/stories", token=token_v)
+    check("vikram stories show meera group before block",
+          s == 200 and any(g["user"]["username"] == "meera" for g in stories_v),
+          f"{s} {stories_v}")
+    s, dm_pre = call("POST", f"/api/dm/{meera_id}", token=token_v,
+                     body={"body": "Hi Meera, block se pehle"})
+    check("DM works before block", s == 200 and dm_pre.get("id"), f"{s} {dm_pre}")
+
+    s, blk = call("POST", f"/api/users/{meera_id}/block", token=token_v)
+    check("vikram blocks meera", s == 200 and blk.get("blocked") is True, f"{s} {blk}")
+    s, blk_list = call("GET", "/api/users/blocked", token=token_v)
+    check("blocked list shows meera",
+          s == 200 and any(u["username"] == "meera" for u in blk_list),
+          f"{s} {blk_list}")
+    s, prof_blk = call("GET", f"/api/users/{meera_id}", token=token_v)
+    check("profile shows blocked_by_me true",
+          s == 200 and prof_blk.get("blocked_by_me") is True, f"{s} {prof_blk}")
+    s, prof_notblk = call("GET", f"/api/users/{vikram_id}", token=token_m)
+    check("meera sees vikram blocked_by_me false",
+          s == 200 and prof_notblk.get("blocked_by_me") is False, f"{s} {prof_notblk}")
+    s, fol_after = call("GET", f"/api/users/{meera_id}/followers", token=token_v)
+    check("block removed vikram -> meera follow",
+          s == 200 and not any(u["username"] == "vikram" for u in fol_after),
+          f"{s} {fol_after}")
+    s, fing_after = call("GET", f"/api/users/{vikram_id}/following", token=token_v)
+    check("block removed meera from vikram following",
+          s == 200 and not any(u["username"] == "meera" for u in fing_after),
+          f"{s} {fing_after}")
+    s, fol_rev = call("GET", f"/api/users/{vikram_id}/followers", token=token_m)
+    check("block removed meera -> vikram follow (reverse direction)",
+          s == 200 and not any(u["username"] == "meera" for u in fol_rev),
+          f"{s} {fol_rev}")
+    s, prof_cnt = call("GET", f"/api/users/{meera_id}", token=token_v)
+    check("meera followers_count back to 0 after block",
+          s == 200 and prof_cnt.get("followers_count") == 0, f"{s} {prof_cnt}")
+    s, feed_v2 = call("GET", "/api/posts", token=token_v)
+    check("blocked user post hidden from feed",
+          s == 200 and not any(p["id"] == mpost_id for p in feed_v2),
+          f"{s} {feed_v2}")
+    s, stories_v2 = call("GET", "/api/stories", token=token_v)
+    check("blocked user stories hidden from list",
+          s == 200 and not any(g["user"]["username"] == "meera" for g in stories_v2),
+          f"{s} {stories_v2}")
+    s, dm_blk1 = call("POST", f"/api/dm/{meera_id}", token=token_v,
+                      body={"body": "Hi Meera"})
+    check("DM to blocked user is 403", s == 403, f"{s} {dm_blk1}")
+    s, dm_blk2 = call("POST", f"/api/dm/{vikram_id}", token=token_m,
+                      body={"body": "Hi Vikram"})
+    check("DM from blocked user is 403 (reverse direction)", s == 403,
+          f"{s} {dm_blk2}")
+    s, blk2 = call("POST", f"/api/users/{meera_id}/block", token=token_v)
+    check("block again is idempotent (still blocked)",
+          s == 200 and blk2.get("blocked") is True, f"{s} {blk2}")
+    s, blk_self = call("POST", f"/api/users/{vikram_id}/block", token=token_v)
+    check("self-block is 400", s == 400, f"{s} {blk_self}")
+    s, blk_ghost = call("POST", "/api/users/99999/block", token=token_v)
+    check("block nonexistent user is 404", s == 404, f"{s} {blk_ghost}")
+    s, blk_noauth = call("POST", f"/api/users/{meera_id}/block")
+    check("block without token is 401", s == 401, f"{s} {blk_noauth}")
+
+    s, unblk = call("POST", f"/api/users/{meera_id}/unblock", token=token_v)
+    check("vikram unblocks meera", s == 200 and unblk.get("blocked") is False,
+          f"{s} {unblk}")
+    s, blk_list2 = call("GET", "/api/users/blocked", token=token_v)
+    check("blocked list empty after unblock", s == 200 and blk_list2 == [],
+          f"{s} {blk_list2}")
+    s, prof_unblk = call("GET", f"/api/users/{meera_id}", token=token_v)
+    check("profile shows blocked_by_me false after unblock",
+          s == 200 and prof_unblk.get("blocked_by_me") is False, f"{s} {prof_unblk}")
+    s, dm_after = call("POST", f"/api/dm/{meera_id}", token=token_v,
+                       body={"body": "Hi Meera, unblock ke baad"})
+    check("DM works again after unblock", s == 200 and dm_after.get("id"),
+          f"{s} {dm_after}")
+    s, unblk_ghost = call("POST", "/api/users/99999/unblock", token=token_v)
+    check("unblock nonexistent user is 404", s == 404, f"{s} {unblk_ghost}")
+    s, unblk2 = call("POST", f"/api/users/{meera_id}/unblock", token=token_v)
+    check("unblock when not blocked is idempotent (still false)",
+          s == 200 and unblk2.get("blocked") is False, f"{s} {unblk2}")
+
     print(f"\nRESULT: {PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)
 

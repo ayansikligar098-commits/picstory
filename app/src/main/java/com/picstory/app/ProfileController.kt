@@ -10,6 +10,7 @@ import android.widget.EditText
 import android.widget.GridView
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.TextView
 import org.json.JSONObject
 
@@ -49,6 +50,10 @@ class ProfileController(
         const val REQ_AVATAR = 4001
         /** Username: lowercase letters, numbers, underscore; 3–20 chars. */
         val USERNAME_OK = Regex("^[a-z0-9_]{3,20}$")
+        /** Profile-menu (≡) item ids. */
+        const val MENU_BLOCK = 1
+        const val MENU_SHARE = 2
+        const val MENU_BLOCKED = 3
     }
 
     init {
@@ -104,8 +109,9 @@ class ProfileController(
                 tvFollowersCount.text = u.followersCount.toString()
                 tvFollowingCount.text = u.followingCount.toString()
                 val own = u.id == Prefs.myUserId
-                btnFollow.visibility = if (own) View.GONE else View.VISIBLE
-                btnMessage.visibility = if (own) View.GONE else View.VISIBLE
+                // A blocked user gets no Follow / Message buttons at all.
+                btnFollow.visibility = if (own || u.blockedByMe) View.GONE else View.VISIBLE
+                btnMessage.visibility = if (own || u.blockedByMe) View.GONE else View.VISIBLE
                 btnEditProfile.visibility = if (own) View.VISIBLE else View.GONE
                 updateFollowButton(u)
             }
@@ -113,15 +119,112 @@ class ProfileController(
     }
 
     private fun updateFollowButton(u: User) {
+        // White Follow button (v3.1, no purple); "Following" stays the
+        // dark edit_bg style it always had.
         btnFollow.text = if (u.followedByMe) "Following" else "Follow"
         btnFollow.setBackgroundResource(
-            if (u.followedByMe) R.drawable.edit_bg else R.drawable.btn_primary
+            if (u.followedByMe) R.drawable.edit_bg else R.drawable.btn_white
         )
         btnFollow.setTextColor(
             activity.resources.getColor(
-                if (u.followedByMe) R.color.textPrimary else R.color.white, activity.theme
+                if (u.followedByMe) R.color.textPrimary else R.color.black, activity.theme
             )
         )
+    }
+
+    // ---- Profile menu (≡, v3.1) ------------------------------------------
+    // Other profiles: Block/Unblock + Share. Own profile: Share +
+    // Blocked users (you cannot block yourself).
+
+    /** Opens the hamburger menu anchored to the given view. Called from
+     * ProfileActivity's header button and HomeActivity's Profile tab. */
+    fun showProfileMenu(anchor: View) {
+        val u = user ?: return
+        val own = u.id == Prefs.myUserId
+        val menu = PopupMenu(activity, anchor)
+        if (own) {
+            menu.menu.add(0, MENU_SHARE, 0, activity.getString(R.string.share))
+            menu.menu.add(0, MENU_BLOCKED, 1, activity.getString(R.string.blocked_users))
+        } else {
+            menu.menu.add(
+                0, MENU_BLOCK, 0,
+                activity.getString(if (u.blockedByMe) R.string.unblock else R.string.block)
+            )
+            menu.menu.add(0, MENU_SHARE, 1, activity.getString(R.string.share))
+        }
+        menu.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                MENU_BLOCK -> {
+                    if (u.blockedByMe) doUnblock() else confirmBlock()
+                    true
+                }
+                MENU_SHARE -> {
+                    shareProfile()
+                    true
+                }
+                MENU_BLOCKED -> {
+                    activity.startActivity(
+                        Intent(activity, BlockedUsersActivity::class.java))
+                    true
+                }
+                else -> false
+            }
+        }
+        menu.show()
+    }
+
+    private fun confirmBlock() {
+        val u = user ?: return
+        AlertDialog.Builder(activity)
+            .setTitle("Block @${u.username}?")
+            .setMessage(
+                "They won't be able to message you or see your posts and " +
+                "stories, and you won't see theirs."
+            )
+            .setPositiveButton("Block") { _, _ -> doBlock() }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun doBlock() {
+        val u = user ?: return
+        Api.call("POST", "/api/users/${u.id}/block") { ok, json, err ->
+            activity.runOnUiThread {
+                if (ok && json != null && json.optBoolean("blocked")) {
+                    user = u.copy(blockedByMe = true, followedByMe = false)
+                    Ui.toast(activity, "Blocked @${u.username}")
+                    loadUser()
+                } else {
+                    Ui.toast(activity, err ?: "Could not block")
+                }
+            }
+        }
+    }
+
+    private fun doUnblock() {
+        val u = user ?: return
+        Api.call("POST", "/api/users/${u.id}/unblock") { ok, json, err ->
+            activity.runOnUiThread {
+                if (ok && json != null && !json.optBoolean("blocked", true)) {
+                    user = u.copy(blockedByMe = false)
+                    Ui.toast(activity, "Unblocked @${u.username}")
+                    loadUser()
+                } else {
+                    Ui.toast(activity, err ?: "Could not unblock")
+                }
+            }
+        }
+    }
+
+    /** Shares this profile as text via the Android share sheet. */
+    private fun shareProfile() {
+        val u = user ?: return
+        val text = "finsta • @${u.username}"
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        activity.startActivity(Intent.createChooser(intent, "Share profile"))
     }
 
     /** Open a 1:1 DM chat with the user on screen (other users only). */

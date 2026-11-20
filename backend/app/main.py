@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from .db import Base, engine, get_db
 from .models import (
+    Block,
     Conversation,
     Follow,
     Highlight,
@@ -86,6 +87,44 @@ def _migrate_user_columns():
 _migrate_user_columns()
 
 
+def _migrate_blocks():
+    """Create the blocks table on databases built before v3.1 (same
+    reason as above: create_all() only creates missing tables, and this
+    runs as belt-and-braces alongside it so a live Supabase Postgres
+    database gets the table even if create_all was skipped). Safe no-op
+    when the table already exists."""
+    try:
+        with engine.begin() as conn:
+            if engine.dialect.name == "sqlite":
+                conn.execute(text(
+                    "CREATE TABLE IF NOT EXISTS blocks ("
+                    "id INTEGER NOT NULL PRIMARY KEY, "
+                    "blocker_id INTEGER NOT NULL, "
+                    "blocked_id INTEGER NOT NULL, "
+                    "created_at DATETIME NOT NULL, "
+                    "FOREIGN KEY(blocker_id) REFERENCES users (id), "
+                    "FOREIGN KEY(blocked_id) REFERENCES users (id))"
+                ))
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_block "
+                    "ON blocks (blocker_id, blocked_id)"
+                ))
+            else:
+                conn.execute(text(
+                    "CREATE TABLE IF NOT EXISTS blocks ("
+                    "id SERIAL PRIMARY KEY, "
+                    "blocker_id INTEGER NOT NULL REFERENCES users (id), "
+                    "blocked_id INTEGER NOT NULL REFERENCES users (id), "
+                    "created_at TIMESTAMP NOT NULL)"
+                ))
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_block "
+                    "ON blocks (blocker_id, blocked_id)"
+                ))
+    except Exception:
+        pass
+
+
 def _migrate_new_columns():
     """Add dm_messages.media_url/media_kind, posts.video_url and
     stories.video_url on databases built before those columns existed
@@ -123,6 +162,9 @@ def _migrate_new_columns():
 
 
 _migrate_new_columns()
+
+
+_migrate_blocks()
 
 app = FastAPI(title="PicStory", version="1.0.0")
 app.add_middleware(
@@ -190,6 +232,12 @@ def user_out(u: User, me_id: int, db: Session) -> dict:
         .first()
         is not None
     ) if me_id != u.id else False
+    blocked = (
+        db.query(Block)
+        .filter(Block.blocker_id == me_id, Block.blocked_id == u.id)
+        .first()
+        is not None
+    ) if me_id != u.id else False
     return {
         "id": u.id,
         "username": u.username,
@@ -201,10 +249,30 @@ def user_out(u: User, me_id: int, db: Session) -> dict:
         "followers_count": followers,
         "following_count": following,
         "followed_by_me": followed,
+        "blocked_by_me": blocked,
         "online": is_online(u),
         "last_seen_at": iso(u.last_seen_at),
         "created_at": iso(u.created_at),
     }
+
+
+def my_blocked_ids(db: Session, me_id: int) -> set:
+    """User ids I have blocked."""
+    return {r.blocked_id for r in
+            db.query(Block).filter(Block.blocker_id == me_id).all()}
+
+
+def blocked_either_way(db: Session, a_id: int, b_id: int) -> bool:
+    """True if a blocked b OR b blocked a."""
+    return (
+        db.query(Block)
+        .filter(or_(
+            (Block.blocker_id == a_id) & (Block.blocked_id == b_id),
+            (Block.blocker_id == b_id) & (Block.blocked_id == a_id),
+        ))
+        .first()
+        is not None
+    )
 
 
 def notify(db: Session, recipient_id: int, actor: User, ntype: str,
@@ -467,6 +535,26 @@ def search_users(
     return [user_out(u, user.id, db) for u in query.order_by(User.display_name).limit(50).all()]
 
 
+@app.get("/api/users/blocked")
+def list_blocked(db: Session = Depends(get_db),
+                 user: User = Depends(get_current_user)):
+    # NOTE: this MUST stay above GET /api/users/{user_id} — Starlette
+    # matches "/api/users/blocked" against the {user_id} route first and
+    # answers 422 instead of trying the next route.
+    rows = (
+        db.query(Block)
+        .filter(Block.blocker_id == user.id)
+        .order_by(Block.created_at.desc(), Block.id.desc())
+        .all()
+    )
+    out = []
+    for r in rows:
+        u = db.query(User).get(r.blocked_id)
+        if u:
+            out.append(user_out(u, user.id, db))
+    return out
+
+
 @app.get("/api/users/{user_id}")
 def get_user(user_id: int, db: Session = Depends(get_db),
              user: User = Depends(get_current_user)):
@@ -500,6 +588,52 @@ def toggle_follow(user_id: int, db: Session = Depends(get_db),
     db.commit()
     followers = db.query(Follow).filter(Follow.following_id == user_id).count()
     return {"following": following, "followers_count": followers}
+
+
+# ---------------------------------------------------------------------------
+# Blocks (v3.1) — blocking also removes follows in BOTH directions, and
+# hides the blocked user from the blocker's stories/feed/DMs (see the
+# filters in list_stories / list_posts and the 403 in send_dm).
+# ---------------------------------------------------------------------------
+@app.post("/api/users/{user_id}/block")
+def block_user(user_id: int, db: Session = Depends(get_db),
+               user: User = Depends(get_current_user)):
+    if user_id == user.id:
+        raise HTTPException(status_code=400, detail="You cannot block yourself")
+    other = db.query(User).get(user_id)
+    if not other:
+        raise HTTPException(status_code=404, detail="User not found")
+    existing = (
+        db.query(Block)
+        .filter(Block.blocker_id == user.id, Block.blocked_id == user_id)
+        .first()
+    )
+    if not existing:
+        db.add(Block(blocker_id=user.id, blocked_id=user_id))
+    # Follows in both directions go away with the block.
+    db.query(Follow).filter(
+        or_(
+            (Follow.follower_id == user.id) & (Follow.following_id == user_id),
+            (Follow.follower_id == user_id) & (Follow.following_id == user.id),
+        )
+    ).delete(synchronize_session=False)
+    db.commit()
+    return {"blocked": True}
+
+
+@app.post("/api/users/{user_id}/unblock")
+def unblock_user(user_id: int, db: Session = Depends(get_db),
+                 user: User = Depends(get_current_user)):
+    if user_id == user.id:
+        raise HTTPException(status_code=400, detail="You cannot block yourself")
+    other = db.query(User).get(user_id)
+    if not other:
+        raise HTTPException(status_code=404, detail="User not found")
+    db.query(Block).filter(
+        Block.blocker_id == user.id, Block.blocked_id == user_id
+    ).delete(synchronize_session=False)
+    db.commit()
+    return {"blocked": False}
 
 
 @app.get("/api/users/{user_id}/followers")
@@ -653,6 +787,8 @@ def list_posts(
     followed_ids = [r.following_id for r in
                     db.query(Follow).filter(Follow.follower_id == user.id).all()]
     allowed = set(followed_ids + [user.id])
+    # v3.1: people I blocked never show their stories to me.
+    allowed -= my_blocked_ids(db, user.id)
     posts = (
         db.query(Post).filter(Post.user_id.in_(allowed))
         .order_by(Post.created_at.desc(), Post.id.desc())
@@ -814,6 +950,8 @@ def list_stories(db: Session = Depends(get_db), user: User = Depends(get_current
     followed_ids = [r.following_id for r in
                     db.query(Follow).filter(Follow.follower_id == user.id).all()]
     allowed = set(followed_ids + [user.id])
+    # v3.1: people I blocked never show their stories to me.
+    allowed -= my_blocked_ids(db, user.id)
     stories = (
         db.query(Story)
         .filter(Story.expires_at > now, Story.user_id.in_(allowed))
@@ -1133,6 +1271,9 @@ def send_dm(user_id: int, body: DmIn, db: Session = Depends(get_db),
     other = db.query(User).get(user_id)
     if not other:
         raise HTTPException(status_code=404, detail="User not found")
+    if blocked_either_way(db, user.id, user_id):
+        raise HTTPException(
+            status_code=403, detail="You can't message this user")
     text = (body.body or "").strip()
     media_url = (body.media_url or "").strip()[:512]
     media_kind = (body.media_kind or "text").strip().lower()

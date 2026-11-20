@@ -22,6 +22,9 @@ class ProfileActivity : Activity() {
         }
         findViewById<android.widget.Button>(R.id.btnBack).setOnClickListener { finish() }
         controller = ProfileController(this, findViewById(R.id.profileRoot), userId)
+        findViewById<android.widget.ImageButton>(R.id.btnMenu).setOnClickListener { v ->
+            controller?.showProfileMenu(v)
+        }
         controller?.load()
     }
 

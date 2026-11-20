@@ -51,6 +51,8 @@
             android:configChanges="orientation|screenSize|keyboardHidden" />
         <activity android:name=".UserListActivity" android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity android:name=".BlockedUsersActivity" android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
         <activity android:name=".DmListActivity" android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden" />
         <activity android:name=".DmChatActivity" android:exported="false"

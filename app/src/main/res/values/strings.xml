@@ -58,6 +58,9 @@
     <string name="add_comment">Add a comment…</string>
     <string name="send">Send</string>
     <string name="share">Share</string>
+    <string name="block">Block</string>
+    <string name="unblock">Unblock</string>
+    <string name="blocked_users">Blocked users</string>
     <string name="cancel">Cancel</string>
     <string name="pick_photo">Choose a Photo</string>
     <string name="story_too_long">Story 59 second se zyada ki nahi ho sakti</string>
