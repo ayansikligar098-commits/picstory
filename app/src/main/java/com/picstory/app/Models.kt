@@ -13,6 +13,7 @@ data class User(
     val followingCount: Int,
     val followedByMe: Boolean,
     val blockedByMe: Boolean = false,
+    val blockedMe: Boolean = false,
     val online: Boolean,
     val lastSeenAt: String?,
     val createdAt: String?
@@ -29,6 +30,7 @@ data class User(
             followingCount = o.optInt("following_count"),
             followedByMe = o.optBoolean("followed_by_me"),
             blockedByMe = o.optBoolean("blocked_by_me"),
+            blockedMe = o.optBoolean("blocked_me"),
             online = o.optBoolean("online"),
             lastSeenAt = o.optString("last_seen_at").takeIf { it.isNotEmpty() },
             createdAt = o.optString("created_at").takeIf { it.isNotEmpty() }

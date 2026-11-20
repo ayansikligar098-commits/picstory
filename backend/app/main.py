@@ -238,6 +238,15 @@ def user_out(u: User, me_id: int, db: Session) -> dict:
         .first()
         is not None
     ) if me_id != u.id else False
+    # v3.3: did the viewed user block me?
+    blocked_me = (
+        db.query(Block)
+        .filter(Block.blocker_id == u.id, Block.blocked_id == me_id)
+        .first()
+        is not None
+    ) if me_id != u.id else False
+    # v3.3: a block in either direction hides online activity both ways.
+    blocked_either = blocked or blocked_me
     return {
         "id": u.id,
         "username": u.username,
@@ -250,8 +259,9 @@ def user_out(u: User, me_id: int, db: Session) -> dict:
         "following_count": following,
         "followed_by_me": followed,
         "blocked_by_me": blocked,
-        "online": is_online(u),
-        "last_seen_at": iso(u.last_seen_at),
+        "blocked_me": blocked_me,
+        "online": is_online(u) and not blocked_either,
+        "last_seen_at": None if blocked_either else iso(u.last_seen_at),
         "created_at": iso(u.created_at),
     }
 
@@ -260,6 +270,14 @@ def my_blocked_ids(db: Session, me_id: int) -> set:
     """User ids I have blocked."""
     return {r.blocked_id for r in
             db.query(Block).filter(Block.blocker_id == me_id).all()}
+
+
+def blocked_either_way_ids(db: Session, me_id: int) -> set:
+    """User ids with a block in either direction with me (v3.3)."""
+    out = my_blocked_ids(db, me_id)
+    out |= {r.blocker_id for r in
+            db.query(Block).filter(Block.blocked_id == me_id).all()}
+    return out
 
 
 def blocked_either_way(db: Session, a_id: int, b_id: int) -> bool:
@@ -787,8 +805,8 @@ def list_posts(
     followed_ids = [r.following_id for r in
                     db.query(Follow).filter(Follow.follower_id == user.id).all()]
     allowed = set(followed_ids + [user.id])
-    # v3.1: people I blocked never show their stories to me.
-    allowed -= my_blocked_ids(db, user.id)
+    # v3.3: a block in either direction hides posts both ways.
+    allowed -= blocked_either_way_ids(db, user.id)
     posts = (
         db.query(Post).filter(Post.user_id.in_(allowed))
         .order_by(Post.created_at.desc(), Post.id.desc())
@@ -804,8 +822,11 @@ def explore(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    # v3.3: blocked users' posts (either direction) never appear here.
+    hidden = blocked_either_way_ids(db, user.id)
     posts = (
-        db.query(Post).order_by(Post.created_at.desc(), Post.id.desc())
+        db.query(Post).filter(~Post.user_id.in_(hidden))
+        .order_by(Post.created_at.desc(), Post.id.desc())
         .offset(offset).limit(limit).all()
     )
     return [post_out(db, p, user.id) for p in posts]
@@ -817,6 +838,9 @@ def list_user_posts(user_id: int, db: Session = Depends(get_db),
     other = db.query(User).get(user_id)
     if not other:
         raise HTTPException(status_code=404, detail="User not found")
+    # v3.3: a block in either direction hides the profile's posts.
+    if user_id != user.id and blocked_either_way(db, user.id, user_id):
+        return []
     posts = (
         db.query(Post).filter(Post.user_id == user_id)
         .order_by(Post.created_at.desc(), Post.id.desc()).all()
@@ -846,6 +870,9 @@ def get_post(post_id: int, db: Session = Depends(get_db),
              user: User = Depends(get_current_user)):
     post = db.query(Post).get(post_id)
     if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    # v3.3: a block in either direction hides the post (and its comments).
+    if post.user_id != user.id and blocked_either_way(db, user.id, post.user_id):
         raise HTTPException(status_code=404, detail="Post not found")
     return post_out(db, post, user.id)
 
@@ -895,6 +922,9 @@ def list_comments(post_id: int, db: Session = Depends(get_db),
                   user: User = Depends(get_current_user)):
     post = db.query(Post).get(post_id)
     if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    # v3.3: same hiding as the post itself.
+    if post.user_id != user.id and blocked_either_way(db, user.id, post.user_id):
         raise HTTPException(status_code=404, detail="Post not found")
     comments = (
         db.query(PostComment)
@@ -950,8 +980,8 @@ def list_stories(db: Session = Depends(get_db), user: User = Depends(get_current
     followed_ids = [r.following_id for r in
                     db.query(Follow).filter(Follow.follower_id == user.id).all()]
     allowed = set(followed_ids + [user.id])
-    # v3.1: people I blocked never show their stories to me.
-    allowed -= my_blocked_ids(db, user.id)
+    # v3.3: a block in either direction hides stories both ways.
+    allowed -= blocked_either_way_ids(db, user.id)
     stories = (
         db.query(Story)
         .filter(Story.expires_at > now, Story.user_id.in_(allowed))
@@ -1116,6 +1146,9 @@ def list_highlights(user_id: int, db: Session = Depends(get_db),
     other = db.query(User).get(user_id)
     if not other:
         raise HTTPException(status_code=404, detail="User not found")
+    # v3.3: a block in either direction hides the highlights.
+    if user_id != user.id and blocked_either_way(db, user.id, user_id):
+        return []
     highlights = (
         db.query(Highlight).filter(Highlight.user_id == user_id)
         .order_by(Highlight.created_at.asc(), Highlight.id.asc()).all()
@@ -1128,6 +1161,9 @@ def get_highlight(highlight_id: int, db: Session = Depends(get_db),
                   user: User = Depends(get_current_user)):
     h = db.query(Highlight).get(highlight_id)
     if not h:
+        raise HTTPException(status_code=404, detail="Highlight not found")
+    # v3.3: same hiding as the highlights list.
+    if h.user_id != user.id and blocked_either_way(db, user.id, h.user_id):
         raise HTTPException(status_code=404, detail="Highlight not found")
     return highlight_out(db, h, user.id, with_stories=True)
 

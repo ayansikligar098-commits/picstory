@@ -34,6 +34,7 @@ class ProfileController(
     private val tvFollowingCount: TextView = root.findViewById(R.id.tvFollowingCount)
     private val btnFollow: Button = root.findViewById(R.id.btnFollow)
     private val btnMessage: Button = root.findViewById(R.id.btnMessage)
+    private val btnBlocked: Button = root.findViewById(R.id.btnBlocked)
     private val btnEditProfile: Button = root.findViewById(R.id.btnEditProfile)
     private val highlightsRow: LinearLayout = root.findViewById(R.id.highlightsRow)
     private val tvNoHighlights: TextView = root.findViewById(R.id.tvNoHighlights)
@@ -61,6 +62,7 @@ class ProfileController(
         ivAvatar.setOnClickListener { maybePickAvatar() }
         btnFollow.setOnClickListener { toggleFollow() }
         btnMessage.setOnClickListener { openDm() }
+        btnBlocked.setOnClickListener { onBlockedButton() }
         btnEditProfile.setOnClickListener { showEditProfile() }
         root.findViewById<View>(R.id.statFollowers).setOnClickListener {
             openUserList("followers")
@@ -109,9 +111,12 @@ class ProfileController(
                 tvFollowersCount.text = u.followersCount.toString()
                 tvFollowingCount.text = u.followingCount.toString()
                 val own = u.id == Prefs.myUserId
-                // A blocked user gets no Follow / Message buttons at all.
-                btnFollow.visibility = if (own || u.blockedByMe) View.GONE else View.VISIBLE
-                btnMessage.visibility = if (own || u.blockedByMe) View.GONE else View.VISIBLE
+                // v3.3: a block in either direction hides Follow / Message
+                // and shows one big "Blocked" button instead.
+                val blockedEither = u.blockedByMe || u.blockedMe
+                btnFollow.visibility = if (own || blockedEither) View.GONE else View.VISIBLE
+                btnMessage.visibility = if (own || blockedEither) View.GONE else View.VISIBLE
+                btnBlocked.visibility = if (own || !blockedEither) View.GONE else View.VISIBLE
                 btnEditProfile.visibility = if (own) View.VISIBLE else View.GONE
                 updateFollowButton(u)
             }
@@ -171,6 +176,25 @@ class ProfileController(
             }
         }
         menu.show()
+    }
+
+    /** Big "Blocked" button (v3.3): if I blocked them, offer to unblock;
+     * if they blocked me, the button is just a notice. */
+    private fun onBlockedButton() {
+        val u = user ?: return
+        if (u.blockedByMe) {
+            AlertDialog.Builder(activity)
+                .setTitle("Unblock @${u.username}?")
+                .setMessage(
+                    "They will be able to message you and see your posts " +
+                    "and stories again."
+                )
+                .setPositiveButton("Unblock") { _, _ -> doUnblock() }
+                .setNegativeButton("Cancel", null)
+                .show()
+        } else {
+            Ui.toast(activity, activity.getString(R.string.blocked_by_user))
+        }
     }
 
     private fun confirmBlock() {

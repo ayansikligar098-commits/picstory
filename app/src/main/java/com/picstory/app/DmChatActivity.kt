@@ -45,6 +45,8 @@ class DmChatActivity : Activity() {
     private lateinit var etMessage: EditText
     private lateinit var vPresenceDot: View
     private lateinit var tvTyping: TextView
+    private lateinit var tvBlockedNotice: TextView
+    private lateinit var dmInputRow: View
     private val pollHandler = Handler(Looper.getMainLooper())
     private var pollRunnable: Runnable? = null
     private var presenceRunnable: Runnable? = null
@@ -137,6 +139,8 @@ class DmChatActivity : Activity() {
         etMessage = findViewById(R.id.etMessage)
         vPresenceDot = findViewById(R.id.vPresenceDot)
         tvTyping = findViewById(R.id.tvTyping)
+        tvBlockedNotice = findViewById(R.id.tvBlockedNotice)
+        dmInputRow = findViewById(R.id.dmInputRow)
         lvMessages.adapter = adapter
 
         val tvAvatar = findViewById<TextView>(R.id.tvAvatar)
@@ -172,6 +176,7 @@ class DmChatActivity : Activity() {
         markRead()
         loadThread()
         loadPresence()
+        loadBlockState()
         startPolling()
     }
 
@@ -194,6 +199,7 @@ class DmChatActivity : Activity() {
         val pr = object : Runnable {
             override fun run() {
                 loadPresence()
+                loadBlockState()
                 pollHandler.postDelayed(this, 20_000)
             }
         }
@@ -208,7 +214,9 @@ class DmChatActivity : Activity() {
         presenceRunnable = null
     }
 
-    /** Green dot = the other person is online now, red = offline. */
+    /** Green dot = the other person is online now, red = offline.
+     * The backend already hides presence when a block exists in either
+     * direction (v3.3), so a blocked user always shows offline here. */
     private fun loadPresence() {
         Api.call("GET", "/api/users/$userId") { ok, json, _ ->
             runOnUiThread {
@@ -220,6 +228,24 @@ class DmChatActivity : Activity() {
                 )
             }
         }
+    }
+
+    /** "Blocked" notice (v3.3): when a block exists in either direction,
+     * the message input is replaced by a written Blocked notice. */
+    private fun loadBlockState() {
+        Api.call("GET", "/api/users/$userId") { ok, json, _ ->
+            runOnUiThread {
+                if (!ok || json == null) return@runOnUiThread
+                val u = try { User.fromJson(json) } catch (e: Exception) { return@runOnUiThread }
+                applyBlockedState(u.blockedByMe || u.blockedMe)
+            }
+        }
+    }
+
+    private fun applyBlockedState(blocked: Boolean) {
+        tvBlockedNotice.visibility = if (blocked) View.VISIBLE else View.GONE
+        dmInputRow.visibility = if (blocked) View.GONE else View.VISIBLE
+        etMessage.isEnabled = !blocked
     }
 
     /** "typing…" under the other person's name while they type. */
@@ -272,6 +298,9 @@ class DmChatActivity : Activity() {
                 if (ok) {
                     loadThread()
                 } else {
+                    // A 403 here means the other side blocked (or was
+                    // blocked): show the Blocked notice right away.
+                    if (err?.contains("can't message") == true) applyBlockedState(true)
                     Ui.toast(this, err ?: "Message could not be sent")
                 }
             }
@@ -364,6 +393,7 @@ class DmChatActivity : Activity() {
                 if (ok) {
                     loadThread()
                 } else {
+                    if (err?.contains("can't message") == true) applyBlockedState(true)
                     Ui.toast(this, err ?: "Message could not be sent")
                 }
             }

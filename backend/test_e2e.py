@@ -775,6 +775,28 @@ def main():
     s, mstory = call("POST", "/api/stories", token=token_m,
                      body={"image_url": img_url})
     check("meera creates a story", s == 200 and mstory.get("id"), f"{s} {mstory}")
+    s, vpost = call("POST", "/api/posts", token=token_v,
+                    body={"caption": "Vikram ki photo", "image_url": img_url})
+    check("vikram creates a post", s == 200 and vpost.get("id"), f"{s} {vpost}")
+    vpost_id = vpost["id"]
+    s, vstory = call("POST", "/api/stories", token=token_v,
+                     body={"image_url": img_url})
+    check("vikram creates a story", s == 200 and vstory.get("id"), f"{s} {vstory}")
+    s, vhl = call("POST", "/api/highlights", token=token_v,
+                  body={"name": "Vikram ki yaadein", "story_ids": [vstory["id"]]})
+    check("vikram creates a highlight", s == 200 and vhl.get("id"), f"{s} {vhl}")
+    vhl_id = vhl["id"]
+    s, feed_m = call("GET", "/api/posts", token=token_m)
+    check("meera feed shows vikram post before block",
+          s == 200 and any(p["id"] == vpost_id for p in feed_m), f"{s} {feed_m}")
+    s, stories_m = call("GET", "/api/stories", token=token_m)
+    check("meera stories show vikram group before block",
+          s == 200 and any(g["user"]["username"] == "vikram" for g in stories_m),
+          f"{s} {stories_m}")
+    s, prof_v_pre = call("GET", f"/api/users/{vikram_id}", token=token_m)
+    check("meera sees vikram online before block",
+          s == 200 and prof_v_pre.get("online") is True
+          and prof_v_pre.get("last_seen_at"), f"{s} {prof_v_pre}")
     s, feed_v = call("GET", "/api/posts", token=token_v)
     check("vikram feed shows meera post before block",
           s == 200 and any(p["id"] == mpost_id for p in feed_v), f"{s} {feed_v}")
@@ -821,6 +843,48 @@ def main():
     check("blocked user stories hidden from list",
           s == 200 and not any(g["user"]["username"] == "meera" for g in stories_v2),
           f"{s} {stories_v2}")
+
+    print("== mutual block hiding (v3.3) ==")
+    s, feed_m2 = call("GET", "/api/posts", token=token_m)
+    check("blocked user feed excludes blocker post",
+          s == 200 and not any(p["id"] == vpost_id for p in feed_m2),
+          f"{s} {feed_m2}")
+    s, ex_m = call("GET", "/api/explore", token=token_m)
+    check("blocked user explore excludes blocker post",
+          s == 200 and not any(p["id"] == vpost_id for p in ex_m),
+          f"{s} {ex_m}")
+    check("blocked user explore still shows own post",
+          s == 200 and any(p["id"] == mpost_id for p in ex_m),
+          f"{s} {ex_m}")
+    s, detail_m = call("GET", f"/api/posts/{vpost_id}", token=token_m)
+    check("blocked user post detail is 404", s == 404, f"{s} {detail_m}")
+    s, cm_m = call("GET", f"/api/posts/{vpost_id}/comments", token=token_m)
+    check("blocked user post comments are 404", s == 404, f"{s} {cm_m}")
+    s, uposts_m = call("GET", f"/api/users/{vikram_id}/posts", token=token_m)
+    check("blocked user profile posts are empty",
+          s == 200 and uposts_m == [], f"{s} {uposts_m}")
+    s, stories_m2 = call("GET", "/api/stories", token=token_m)
+    check("blocked user stories exclude blocker group",
+          s == 200 and not any(g["user"]["username"] == "vikram" for g in stories_m2),
+          f"{s} {stories_m2}")
+    check("blocked user still sees own story group",
+          s == 200 and any(g["user"]["username"] == "meera" for g in stories_m2),
+          f"{s} {stories_m2}")
+    s, hl_m = call("GET", f"/api/users/{vikram_id}/highlights", token=token_m)
+    check("blocked user highlights are empty",
+          s == 200 and hl_m == [], f"{s} {hl_m}")
+    s, hld_m = call("GET", f"/api/highlights/{vhl_id}", token=token_m)
+    check("blocked user highlight detail is 404", s == 404, f"{s} {hld_m}")
+    s, prof_m_blk = call("GET", f"/api/users/{vikram_id}", token=token_m)
+    check("blocked user sees blocker as offline with no last_seen",
+          s == 200 and prof_m_blk.get("online") is False
+          and prof_m_blk.get("last_seen_at") is None, f"{s} {prof_m_blk}")
+    check("blocked user sees blocked_me true",
+          s == 200 and prof_m_blk.get("blocked_me") is True, f"{s} {prof_m_blk}")
+    s, prof_v_blk = call("GET", f"/api/users/{meera_id}", token=token_v)
+    check("blocker sees blocked user as offline with no last_seen",
+          s == 200 and prof_v_blk.get("online") is False
+          and prof_v_blk.get("last_seen_at") is None, f"{s} {prof_v_blk}")
     s, dm_blk1 = call("POST", f"/api/dm/{meera_id}", token=token_v,
                       body={"body": "Hi Meera"})
     check("DM to blocked user is 403", s == 403, f"{s} {dm_blk1}")
@@ -851,6 +915,26 @@ def main():
                        body={"body": "Hi Meera, unblock ke baad"})
     check("DM works again after unblock", s == 200 and dm_after.get("id"),
           f"{s} {dm_after}")
+    s, ex_m2 = call("GET", "/api/explore", token=token_m)
+    check("explore shows blocker post again after unblock",
+          s == 200 and any(p["id"] == vpost_id for p in ex_m2), f"{s} {ex_m2}")
+    s, detail_m2 = call("GET", f"/api/posts/{vpost_id}", token=token_m)
+    check("post detail works again after unblock",
+          s == 200 and detail_m2.get("id") == vpost_id, f"{s} {detail_m2}")
+    s, uposts_m2 = call("GET", f"/api/users/{vikram_id}/posts", token=token_m)
+    check("profile posts visible again after unblock",
+          s == 200 and any(p["id"] == vpost_id for p in uposts_m2),
+          f"{s} {uposts_m2}")
+    s, hl_m2 = call("GET", f"/api/users/{vikram_id}/highlights", token=token_m)
+    check("highlights visible again after unblock",
+          s == 200 and any(h["id"] == vhl_id for h in hl_m2), f"{s} {hl_m2}")
+    s, prof_m_unblk = call("GET", f"/api/users/{vikram_id}", token=token_m)
+    check("blocker online again after unblock",
+          s == 200 and prof_m_unblk.get("online") is True
+          and prof_m_unblk.get("last_seen_at"), f"{s} {prof_m_unblk}")
+    check("blocked_me false after unblock",
+          s == 200 and prof_m_unblk.get("blocked_me") is False,
+          f"{s} {prof_m_unblk}")
     s, unblk_ghost = call("POST", "/api/users/99999/unblock", token=token_v)
     check("unblock nonexistent user is 404", s == 404, f"{s} {unblk_ghost}")
     s, unblk2 = call("POST", f"/api/users/{meera_id}/unblock", token=token_v)

@@ -94,7 +94,23 @@
         android:divider="@android:color/transparent"
         android:dividerHeight="0dp" />
 
+    <!-- "Blocked" notice (v3.3): shown in place of the message input
+         when a block exists in either direction. -->
+    <TextView
+        android:id="@+id/tvBlockedNotice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/surface"
+        android:gravity="center"
+        android:padding="16dp"
+        android:text="@string/blocked_dm_notice"
+        android:textColor="@color/textSecondary"
+        android:textSize="15sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
     <LinearLayout
+        android:id="@+id/dmInputRow"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="@color/surface"
