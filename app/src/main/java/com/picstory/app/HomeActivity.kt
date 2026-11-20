@@ -42,7 +42,7 @@ class HomeActivity : Activity() {
     private lateinit var lvUsers: ListView
     private lateinit var tvNoUsers: TextView
     private lateinit var btnRefresh: Button
-    private lateinit var vUnreadDot: View
+    private lateinit var tvUnreadBadge: TextView
     private lateinit var tvNotifBadge: TextView
     private lateinit var navProfileAvatar: TextView
     private lateinit var navProfilePhoto: ImageView
@@ -62,7 +62,7 @@ class HomeActivity : Activity() {
     // Search debounce (400ms after the last keystroke).
     private val searchHandler = Handler(Looper.getMainLooper())
     private var searchRunnable: Runnable? = null
-    // Unread-DM polling (refreshes the red dot on the Messages icon).
+    // Unread-DM polling (refreshes the numbered badge on the Messages icon).
     private val unreadHandler = Handler(Looper.getMainLooper())
     private var unreadRunnable: Runnable? = null
 
@@ -282,9 +282,9 @@ class HomeActivity : Activity() {
         lvUsers = findViewById(R.id.lvUsers)
         tvNoUsers = findViewById(R.id.tvNoUsers)
         btnRefresh = findViewById(R.id.btnRefresh)
-        vUnreadDot = findViewById(R.id.vUnreadDot)
+        tvUnreadBadge = findViewById(R.id.tvUnreadBadge)
         tvNotifBadge = findViewById(R.id.tvNotifBadge)
-        findViewById<View>(R.id.flBell).setOnClickListener {
+        findViewById<View>(R.id.flHeart).setOnClickListener {
             startActivity(Intent(this, NotificationsActivity::class.java))
         }
 
@@ -333,7 +333,7 @@ class HomeActivity : Activity() {
                 .setMessage(
                     "• Home: stories + photos from people you follow\n" +
                     "• 🔍 Search people: type a username or name to find people\n" +
-                    "• 🔔 (top right): your notifications — follows, likes, comments, messages\n" +
+                    "• ❤️ (top right): your notifications — follows, likes, comments, messages\n" +
                     "• ✈ (bottom bar): your messages — tap ✉ on someone's profile to start a DM\n" +
                     "• + (top right): share a photo post or a 24-hour story\n" +
                     "• Profile: your photos, highlights and settings\n\n" +
@@ -395,12 +395,14 @@ class HomeActivity : Activity() {
         navProfileAvatar.alpha = if (currentTab == 3) 1.0f else 0.55f
     }
 
-    /** Red dot on the Messages icon while any DM is unread. */
+    /** Red number on the Messages icon: the unread DM count (hidden at 0,
+     * "99+" above 99). Same style as the notifications badge. */
     private fun refreshUnread() {
         Api.call("GET", "/api/dm/unread") { ok, json, _ ->
             runOnUiThread {
                 val n = if (ok && json != null) json.optInt("unread") else 0
-                vUnreadDot.visibility = if (n > 0) View.VISIBLE else View.GONE
+                tvUnreadBadge.visibility = if (n > 0) View.VISIBLE else View.GONE
+                tvUnreadBadge.text = if (n > 99) "99+" else n.toString()
             }
         }
     }

@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.view.MotionEvent
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
@@ -74,8 +75,24 @@ class StoryViewerActivity : Activity() {
         btnDeleteStory = findViewById(R.id.btnDeleteStory)
 
         findViewById<Button>(R.id.btnClose).setOnClickListener { finish() }
-        findViewById<Button>(R.id.btnPrev).setOnClickListener { show(index - 1) }
-        findViewById<Button>(R.id.btnNext).setOnClickListener { show(index + 1) }
+        // Prev/next: tap zones on the story image itself (left third =
+        // previous, right third = next). The header and bottom bar sit
+        // above the image and take their own taps first, so this can
+        // never swallow a tap meant for the like button.
+        ivStory.setOnTouchListener { _, ev ->
+            when (ev.action) {
+                MotionEvent.ACTION_DOWN -> true
+                MotionEvent.ACTION_UP -> {
+                    val w = ivStory.width
+                    if (w > 0) {
+                        if (ev.x < w * 0.35f) show(index - 1)
+                        else if (ev.x > w * 0.65f) show(index + 1)
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
         btnLike.setOnClickListener { toggleLike() }
         findViewById<Button>(R.id.btnSendStoryComment).setOnClickListener { sendStoryReply() }
         btnDeleteStory.setOnClickListener { confirmDeleteStory() }
@@ -214,24 +231,49 @@ class StoryViewerActivity : Activity() {
         btnLike.text = if (story.likedByMe) "♥ ${story.likeCount}" else "♡ ${story.likeCount}"
     }
 
-    /** Heart toggle — updates the count from the server response. */
+    /**
+     * Heart toggle — flips instantly (optimistic UI) so the tap feels
+     * instant even on a slow connection, then reconciles with the
+     * server response. The 5s auto-advance is paused while the request
+     * is in flight, so a slow reply can never be swallowed by the
+     * viewer closing or advancing first; the response is only applied
+     * if this same story is still on screen (index race guard).
+     */
     private fun toggleLike() {
         if (likeBusy) return
         val story = stories.getOrNull(index) ?: return
         likeBusy = true
-        Api.call("POST", "/api/stories/${story.id}/like") { ok, json, err ->
+        val storyId = story.id
+        val optimistic = story.copy(
+            likeCount = if (story.likedByMe) (story.likeCount - 1).coerceAtLeast(0)
+                        else story.likeCount + 1,
+            likedByMe = !story.likedByMe
+        )
+        stories = stories.toMutableList().also { it[index] = optimistic }
+        updateLikeButton(optimistic)
+        stopTimers()
+        Api.call("POST", "/api/stories/$storyId/like") { ok, json, err ->
             runOnUiThread {
                 likeBusy = false
                 if (!ok || json == null) {
+                    // Revert the optimistic flip, if this story is still showing.
+                    if (stories.getOrNull(index)?.id == storyId) {
+                        stories = stories.toMutableList().also { it[index] = story }
+                        updateLikeButton(story)
+                    }
                     Ui.toast(this, err ?: "Like could not be saved")
+                    startTimers()
                     return@runOnUiThread
                 }
                 val updated = story.copy(
-                    likeCount = json.optInt("like_count", story.likeCount),
-                    likedByMe = json.optBoolean("liked", story.likedByMe)
+                    likeCount = json.optInt("like_count", optimistic.likeCount),
+                    likedByMe = json.optBoolean("liked", optimistic.likedByMe)
                 )
-                stories = stories.toMutableList().also { it[index] = updated }
-                updateLikeButton(updated)
+                if (stories.getOrNull(index)?.id == storyId) {
+                    stories = stories.toMutableList().also { it[index] = updated }
+                    updateLikeButton(updated)
+                }
+                startTimers()
             }
         }
     }

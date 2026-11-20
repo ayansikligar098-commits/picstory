@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- One chat bubble. The row gravity and bubble style are set in code:
      my messages right-aligned (purple), theirs left-aligned (card).
-     My messages also show a small Seen/Sent status + time under the bubble.
+     Messages show only the time under the bubble (no Seen/Sent).
      Photo/video messages show the media above the text (tap to open). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/msgRow"

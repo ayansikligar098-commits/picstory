@@ -26,8 +26,10 @@ import java.io.ByteArrayOutputStream
 
 /**
  * 1:1 DM chat with one user. Polls the thread every 5s while open.
- * Text, photo and video messages; ✓ Sent / ✓✓ Seen receipts with time;
- * typing indicator; online/offline presence dot.
+ * Text, photo and video messages; message times; typing indicator;
+ * online/offline presence dot. No Seen/Sent receipts (removed in v2.1
+ * at the user's request) — opening a chat still marks its messages read
+ * internally, so unread counts keep working.
  */
 class DmChatActivity : Activity() {
     private var userId: Int = 0
@@ -100,11 +102,10 @@ class DmChatActivity : Activity() {
                 bubbleRow.gravity = Gravity.END
                 tvBody.setBackgroundResource(R.drawable.btn_primary)
                 tvBody.setTextColor(resources.getColor(R.color.white, theme))
-                // Seen receipt: the other person has read this message.
-                tvStatus.visibility = View.VISIBLE
+                // No Seen/Sent receipts (v2.1): my messages show only the time.
+                tvStatus.visibility = if (time.isNotEmpty()) View.VISIBLE else View.GONE
                 (tvStatus.layoutParams as LinearLayout.LayoutParams).gravity = Gravity.END
-                val ticks = if (m.readAt != null) "✓✓ Seen" else "✓ Sent"
-                tvStatus.text = if (time.isNotEmpty()) "$ticks • $time" else ticks
+                tvStatus.text = time
             } else {
                 bubbleRow.gravity = Gravity.START
                 tvBody.setBackgroundResource(R.drawable.edit_bg)
@@ -251,7 +252,9 @@ class DmChatActivity : Activity() {
         }
     }
 
-    /** Mark their messages to me as read (so the red dot clears). */
+    /** Mark their messages to me as read (so the unread badge clears).
+     * This stays even though Seen receipts are hidden: unread counts
+     * (DM badge + notifications) depend on it. */
     private fun markRead() {
         Api.call("POST", "/api/dm/$userId/read") { _, _, _ -> }
     }

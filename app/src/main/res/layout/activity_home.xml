@@ -52,9 +52,21 @@
             android:textColor="@color/textPrimary"
             android:textSize="18sp" />
 
-        <!-- Notifications bell (red number = unread count). Tap opens Notifications. -->
+        <Button
+            android:id="@+id/btnCreate"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/btn_primary"
+            android:text="+"
+            android:textColor="@color/white"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <!-- Notifications heart (red number = unread count). Tap opens Notifications.
+             Sits on the far right, next to the + button. -->
         <FrameLayout
-            android:id="@+id/flBell"
+            android:id="@+id/flHeart"
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:layout_marginStart="8dp"
@@ -62,11 +74,11 @@
             android:contentDescription="Notifications">
 
             <TextView
-                android:id="@+id/tvBell"
+                android:id="@+id/tvHeart"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
                 android:gravity="center"
-                android:text="🔔"
+                android:text="❤️"
                 android:textSize="18sp" />
 
             <TextView
@@ -82,17 +94,6 @@
                 android:textStyle="bold"
                 android:visibility="gone" />
         </FrameLayout>
-
-        <Button
-            android:id="@+id/btnCreate"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:layout_marginStart="8dp"
-            android:background="@drawable/btn_primary"
-            android:text="+"
-            android:textColor="@color/white"
-            android:textSize="20sp"
-            android:textStyle="bold" />
     </LinearLayout>
 
     <View
@@ -247,7 +248,7 @@
             android:scaleType="centerInside"
             android:src="@drawable/ic_nav_search" />
 
-        <!-- Messages (paper plane). The red dot shows while DMs are unread. -->
+        <!-- Messages (paper plane). The red number shows the unread DM count. -->
         <FrameLayout
             android:id="@+id/navMessages"
             android:layout_width="0dp"
@@ -272,13 +273,22 @@
                     android:scaleType="centerInside"
                     android:src="@drawable/ic_nav_send" />
 
-                <View
-                    android:id="@+id/vUnreadDot"
-                    android:layout_width="12dp"
-                    android:layout_height="12dp"
+                <!-- Numbered unread-DM badge (same style as the notifications
+                     badge): shows the count, hidden at 0, "99+" above 99. -->
+                <TextView
+                    android:id="@+id/tvUnreadBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="18dp"
                     android:layout_gravity="top|end"
-                    android:background="@drawable/dot_red"
-                    android:clickable="false"
+                    android:background="@drawable/badge_red"
+                    android:gravity="center"
+                    android:minWidth="18dp"
+                    android:paddingStart="3dp"
+                    android:paddingEnd="3dp"
+                    android:text="0"
+                    android:textColor="@color/white"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
                     android:visibility="gone" />
             </FrameLayout>
         </FrameLayout>

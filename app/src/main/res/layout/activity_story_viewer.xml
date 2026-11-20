@@ -8,22 +8,15 @@
         android:id="@+id/ivStory"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:clickable="true"
         android:scaleType="fitCenter" />
 
-    <!-- Invisible tap zones: left = previous, right = next -->
-    <Button
-        android:id="@+id/btnPrev"
-        android:layout_width="120dp"
-        android:layout_height="match_parent"
-        android:layout_gravity="start"
-        android:background="@android:color/transparent" />
-
-    <Button
-        android:id="@+id/btnNext"
-        android:layout_width="120dp"
-        android:layout_height="match_parent"
-        android:layout_gravity="end"
-        android:background="@android:color/transparent" />
+    <!-- No full-height overlay tap zones here: in v1.9 two transparent
+         Buttons (btnPrev/btnNext, 120dp x full height) sat under the bottom
+         bar and swallowed taps meant for the like button (same class of
+         bug as the v1.8 Messages icon). Prev/next is now handled by tap
+         zones on the story image itself (see StoryViewerActivity), so
+         nothing can sit between the user's finger and the like button. -->
 
     <LinearLayout
         android:layout_width="match_parent"
