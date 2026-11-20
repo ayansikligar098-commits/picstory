@@ -5,10 +5,19 @@
     android:orientation="vertical"
     android:padding="8dp">
 
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="4dp"
+        android:text="Name"
+        android:textColor="@color/textSecondary"
+        android:textSize="13sp" />
+
     <EditText
         android:id="@+id/etName"
         android:layout_width="match_parent"
         android:layout_height="52dp"
+        android:layout_marginTop="4dp"
         android:background="@drawable/edit_bg"
         android:hint="@string/display_name"
         android:inputType="textPersonName"
@@ -17,11 +26,20 @@
         android:textColor="@color/textPrimary"
         android:textColorHint="@color/textSecondary" />
 
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:paddingStart="4dp"
+        android:text="Username"
+        android:textColor="@color/textSecondary"
+        android:textSize="13sp" />
+
     <EditText
         android:id="@+id/etUsername"
         android:layout_width="match_parent"
         android:layout_height="52dp"
-        android:layout_marginTop="12dp"
+        android:layout_marginTop="4dp"
         android:background="@drawable/edit_bg"
         android:hint="Username"
         android:inputType="text"
@@ -31,11 +49,20 @@
         android:textColor="@color/textPrimary"
         android:textColorHint="@color/textSecondary" />
 
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:paddingStart="4dp"
+        android:text="Bio"
+        android:textColor="@color/textSecondary"
+        android:textSize="13sp" />
+
     <EditText
         android:id="@+id/etBio"
         android:layout_width="match_parent"
         android:layout_height="88dp"
-        android:layout_marginTop="12dp"
+        android:layout_marginTop="4dp"
         android:background="@drawable/edit_bg"
         android:gravity="top"
         android:hint="@string/bio_hint"
@@ -63,44 +90,6 @@
 
         <Button
             android:id="@+id/btnRemovePhoto"
-            android:layout_width="0dp"
-            android:layout_height="44dp"
-            android:layout_marginStart="8dp"
-            android:layout_weight="1"
-            android:background="@drawable/edit_bg"
-            android:text="Remove"
-            android:textColor="@color/danger"
-            android:textStyle="bold"
-            android:visibility="gone" />
-    </LinearLayout>
-
-    <TextView
-        android:id="@+id/tvMusicStatus"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:text="No music set"
-        android:textColor="@color/textSecondary"
-        android:textSize="13sp" />
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:orientation="horizontal">
-
-        <Button
-            android:id="@+id/btnChooseMusic"
-            android:layout_width="0dp"
-            android:layout_height="44dp"
-            android:layout_weight="1"
-            android:background="@drawable/edit_bg"
-            android:text="🎵 Choose music"
-            android:textColor="@color/textPrimary"
-            android:textStyle="bold" />
-
-        <Button
-            android:id="@+id/btnRemoveMusic"
             android:layout_width="0dp"
             android:layout_height="44dp"
             android:layout_marginStart="8dp"

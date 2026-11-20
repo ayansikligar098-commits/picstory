@@ -31,8 +31,6 @@ class ProfileActivity : Activity() {
     }
 
     override fun onPause() {
-        // Profile music must not keep playing once the profile is left.
-        controller?.stopMusic()
         super.onPause()
     }
 

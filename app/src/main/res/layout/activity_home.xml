@@ -33,9 +33,9 @@
 
         <!-- Status line ("Connecting…"): shown only briefly while loading.
              It used to carry layout_weight=1 as the header spacer, but it
-             is GONE most of the time, so the [+] and ❤️ buttons packed up
-             against the logo and sat in the middle of the header. The
-             dedicated spacer below is always visible and pins them right. -->
+             is GONE most of the time, so the ❤️ button packed up against
+             the logo and sat in the middle of the header. The dedicated
+             spacer below is always visible and pins it right. -->
         <TextView
             android:id="@+id/tvStatus"
             android:layout_width="wrap_content"
@@ -56,25 +56,14 @@
             android:textColor="@color/textPrimary"
             android:textSize="18sp" />
 
-        <!-- Spacer: pins [+] and ❤️ to the FAR RIGHT edge on any width. -->
+        <!-- Spacer: pins the ❤️ to the FAR RIGHT edge on any width. -->
         <View
             android:layout_width="0dp"
             android:layout_height="0dp"
             android:layout_weight="1" />
 
-        <Button
-            android:id="@+id/btnCreate"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:layout_marginStart="8dp"
-            android:background="@drawable/btn_primary"
-            android:text="+"
-            android:textColor="@color/white"
-            android:textSize="20sp"
-            android:textStyle="bold" />
-
         <!-- Notifications heart (red number = unread count). Tap opens Notifications.
-             Sits on the far right, next to the + button. -->
+             Sits on the far right. Visible on Home only (see showTab). -->
         <FrameLayout
             android:id="@+id/flHeart"
             android:layout_width="40dp"
@@ -259,6 +248,30 @@
             android:contentDescription="Explore"
             android:scaleType="centerInside"
             android:src="@drawable/ic_nav_search" />
+
+        <!-- Create (+): purple, like the old header button. Not a tab —
+             opens the create chooser and never switches tabs. -->
+        <FrameLayout
+            android:id="@+id/navCreate"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="?android:attr/selectableItemBackground"
+            android:contentDescription="Create">
+
+            <Button
+                android:id="@+id/btnNavCreate"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_gravity="center"
+                android:background="@drawable/btn_primary"
+                android:clickable="false"
+                android:focusable="false"
+                android:text="+"
+                android:textColor="@color/white"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+        </FrameLayout>
 
         <!-- Messages (paper plane). The red number shows the unread DM count. -->
         <FrameLayout

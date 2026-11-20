@@ -42,7 +42,6 @@ class HomeActivity : Activity() {
     private lateinit var lvUsers: ListView
     private lateinit var tvNoUsers: TextView
     private lateinit var btnRefresh: Button
-    private lateinit var btnCreate: Button
     private lateinit var flHeart: View
     private lateinit var tvUnreadBadge: TextView
     private lateinit var tvNotifBadge: TextView
@@ -286,7 +285,6 @@ class HomeActivity : Activity() {
         btnRefresh = findViewById(R.id.btnRefresh)
         tvUnreadBadge = findViewById(R.id.tvUnreadBadge)
         tvNotifBadge = findViewById(R.id.tvNotifBadge)
-        btnCreate = findViewById(R.id.btnCreate)
         flHeart = findViewById(R.id.flHeart)
         flHeart.setOnClickListener {
             // Clear the badge at once (don't wait for the next 30s poll)
@@ -313,6 +311,9 @@ class HomeActivity : Activity() {
 
         findViewById<ImageButton>(R.id.navHome).setOnClickListener { showTab(0) }
         findViewById<ImageButton>(R.id.navExplore).setOnClickListener { showTab(1) }
+        // Create (+) in the bottom nav: opens the create chooser, never
+        // switches tabs. (It used to live in the header.)
+        findViewById<View>(R.id.navCreate).setOnClickListener { showCreateChooser() }
         findViewById<View>(R.id.navMessages).setOnClickListener {
             startActivity(Intent(this, DmListActivity::class.java))
         }
@@ -321,7 +322,6 @@ class HomeActivity : Activity() {
         navProfilePhoto = findViewById(R.id.ivNavProfilePhoto)
         updateNavProfile()
         btnRefresh.setOnClickListener { loadHome() }
-        btnCreate.setOnClickListener { showCreateChooser() }
 
         lvFeed.setOnItemClickListener { _, _, pos, _ -> openPostDetail(feed[pos].id) }
         lvUsers.setOnItemClickListener { _, _, pos, _ ->
@@ -366,8 +366,6 @@ class HomeActivity : Activity() {
     }
 
     override fun onPause() {
-        // Profile music must not keep playing once the app is left.
-        profileController?.stopMusic()
         // A feed video must not keep playing once the screen is left.
         stopActiveVideo()
         stopUnreadPolling()
@@ -460,16 +458,14 @@ class HomeActivity : Activity() {
 
     private fun showTab(tab: Int) {
         currentTab = tab
-        if (tab != 3) profileController?.stopMusic()
         if (tab != 0) stopActiveVideo()
         tabHome.visibility = if (tab == 0) View.VISIBLE else View.GONE
         tabExplore.visibility = if (tab == 1) View.VISIBLE else View.GONE
         tabProfile.visibility = if (tab == 3) View.VISIBLE else View.GONE
-        // [+] and the notifications heart stay in the header everywhere
-        // EXCEPT the Profile tab: the profile page is clean without them,
-        // and they come back on Home / Explore / Messages.
-        btnCreate.visibility = if (tab == 3) View.GONE else View.VISIBLE
-        flHeart.visibility = if (tab == 3) View.GONE else View.VISIBLE
+        // The notifications heart shows on Home only: the Search and
+        // Profile pages stay clean. (Messages opens the DM list, a
+        // separate screen, not a tab — so there is no header there.)
+        flHeart.visibility = if (tab == 0) View.VISIBLE else View.GONE
         tintNav()
         when (tab) {
             0 -> loadHome()
