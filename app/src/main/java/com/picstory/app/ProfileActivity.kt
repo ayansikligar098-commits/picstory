@@ -21,6 +21,11 @@ class ProfileActivity : Activity() {
             return
         }
         findViewById<android.widget.Button>(R.id.btnBack).setOnClickListener { finish() }
+        // The 3-line menu shows ONLY when visiting someone else's
+        // profile. On your own profile it stays hidden.
+        findViewById<android.widget.ImageButton>(R.id.btnMenu).visibility =
+            if (userId == Prefs.myUserId) android.view.View.GONE
+            else android.view.View.VISIBLE
         controller = ProfileController(this, findViewById(R.id.profileRoot), userId)
         findViewById<android.widget.ImageButton>(R.id.btnMenu).setOnClickListener { v ->
             controller?.showProfileMenu(v)

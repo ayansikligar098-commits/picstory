@@ -43,7 +43,6 @@ class HomeActivity : Activity() {
     private lateinit var tvNoUsers: TextView
     private lateinit var btnRefresh: Button
     private lateinit var flHeart: View
-    private lateinit var flMenu: View
     private lateinit var tvUnreadBadge: TextView
     private lateinit var tvNotifBadge: TextView
     private lateinit var navProfileAvatar: TextView
@@ -287,8 +286,6 @@ class HomeActivity : Activity() {
         tvUnreadBadge = findViewById(R.id.tvUnreadBadge)
         tvNotifBadge = findViewById(R.id.tvNotifBadge)
         flHeart = findViewById(R.id.flHeart)
-        flMenu = findViewById(R.id.flMenu)
-        flMenu.setOnClickListener { v -> profileController?.showProfileMenu(v) }
         flHeart.setOnClickListener {
             // Clear the badge at once (don't wait for the next 30s poll)
             // and mark everything read on the server, then open the list.
@@ -471,9 +468,6 @@ class HomeActivity : Activity() {
         // Profile pages stay clean. (Messages opens the DM list, a
         // separate screen, not a tab — so there is no header there.)
         flHeart.visibility = if (tab == 0) View.VISIBLE else View.GONE
-        // The profile menu (≡) shows on the Profile tab only — same slot
-        // the heart leaves empty there, so the header never changes shape.
-        flMenu.visibility = if (tab == 3) View.VISIBLE else View.GONE
         tintNav()
         when (tab) {
             0 -> loadHome()
