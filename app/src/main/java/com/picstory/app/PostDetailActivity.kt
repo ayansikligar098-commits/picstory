@@ -147,7 +147,7 @@ class PostDetailActivity : Activity() {
                     vvVideo.visibility = View.VISIBLE
                     tvPlayIcon.visibility = View.VISIBLE
                     try {
-                        vvVideo.setVideoURI(android.net.Uri.parse(Api.absUrl(p.videoUrl)))
+                        vvVideo.setVideoURI(android.net.Uri.parse(playableVideoUrl(Api.absUrl(p.videoUrl))))
                     } catch (e: Exception) {
                         tvPlayIcon.visibility = View.GONE
                     }

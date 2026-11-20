@@ -20,6 +20,58 @@
         android:clickable="true"
         android:visibility="gone" />
 
+    <!-- v3.4: loading + error states for video stories. A video that
+         never prepares used to sit on a silent black screen forever. -->
+    <LinearLayout
+        android:id="@+id/storyLoadingBox"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <ProgressBar
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:indeterminate="true" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/story_loading"
+            android:textColor="@color/white"
+            android:textSize="15sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/storyErrorBox"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/story_video_failed"
+            android:textColor="@color/white"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnRetryStory"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/btn_primary"
+            android:text="@string/retry"
+            android:textColor="@color/white" />
+    </LinearLayout>
+
     <!-- No full-height overlay tap zones here: in v1.9 two transparent
          Buttons (btnPrev/btnNext, 120dp x full height) sat under the bottom
          bar and swallowed taps meant for the like button (same class of

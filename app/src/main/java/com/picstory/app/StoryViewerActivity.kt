@@ -56,6 +56,14 @@ class StoryViewerActivity : Activity() {
     // fixed 5s image timer. Set when the player is prepared.
     private var videoPrepared = false
     private var videoDurationMs = DURATION_MS
+    // v3.4: a video that never prepares used to sit on a silent black
+    // screen forever (moov-at-end file + slow network, no feedback).
+    // Loading state, one raw-URL retry, a 15s prepare timeout, and an
+    // error state with Retry — never a permanent silent black screen.
+    private var triedRaw = false
+    private var prepareTimeoutRunnable: Runnable? = null
+    private lateinit var storyLoadingBox: LinearLayout
+    private lateinit var storyErrorBox: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -81,6 +89,9 @@ class StoryViewerActivity : Activity() {
         etStoryComment = findViewById(R.id.etStoryComment)
         storyBottomBar = findViewById(R.id.storyBottomBar)
         btnDeleteStory = findViewById(R.id.btnDeleteStory)
+        storyLoadingBox = findViewById(R.id.storyLoadingBox)
+        storyErrorBox = findViewById(R.id.storyErrorBox)
+        findViewById<Button>(R.id.btnRetryStory).setOnClickListener { show(index) }
 
         findViewById<Button>(R.id.btnClose).setOnClickListener { finish() }
         // Prev/next: tap zones on the story media itself (left third =
@@ -128,6 +139,7 @@ class StoryViewerActivity : Activity() {
     override fun onDestroy() {
         super.onDestroy()
         stopTimers()
+        cancelPrepareTimeout()
         stopStoryVideo()
     }
 
@@ -200,6 +212,9 @@ class StoryViewerActivity : Activity() {
         val story = stories[i]
         stopTimers()
         stopStoryVideo()
+        cancelPrepareTimeout()
+        storyLoadingBox.visibility = View.GONE
+        storyErrorBox.visibility = View.GONE
         val a = author
         if (a != null) {
             Ui.setAvatarPhoto(ivStoryAvatar, tvStoryAvatar, a)
@@ -216,18 +231,19 @@ class StoryViewerActivity : Activity() {
         if (story.videoUrl.isNotEmpty()) {
             ivStory.visibility = View.GONE
             vvStory.visibility = View.VISIBLE
+            storyErrorBox.visibility = View.GONE
+            storyLoadingBox.visibility = View.VISIBLE
             videoPrepared = false
             videoDurationMs = DURATION_MS
-            try {
-                vvStory.setVideoURI(Uri.parse(Api.absUrl(story.videoUrl)))
-            } catch (e: Exception) {
-                Ui.toast(this, "Video could not play")
-                show(index + 1)
-                return
-            }
+            triedRaw = false
+            // Listeners FIRST (v3.4): registering them after setVideoURI
+            // can miss a fast prepare/error on some devices.
             vvStory.setOnPreparedListener { mp ->
                 // Only start if this same story is still on screen.
                 if (stories.getOrNull(index)?.id != story.id) return@setOnPreparedListener
+                cancelPrepareTimeout()
+                storyLoadingBox.visibility = View.GONE
+                storyErrorBox.visibility = View.GONE
                 videoPrepared = true
                 videoDurationMs = mp.duration.toLong().coerceIn(1000L, 60_000L)
                 startTimers()
@@ -236,8 +252,31 @@ class StoryViewerActivity : Activity() {
                 if (stories.getOrNull(index)?.id == story.id) show(index + 1)
             }
             vvStory.setOnErrorListener { _, _, _ ->
-                if (stories.getOrNull(index)?.id == story.id) show(index + 1)
+                if (stories.getOrNull(index)?.id != story.id) return@setOnErrorListener true
+                cancelPrepareTimeout()
+                if (!triedRaw) {
+                    // Retry once with the raw original URL: the derived
+                    // faststart URL is preferred, the raw file is the fallback.
+                    triedRaw = true
+                    try {
+                        vvStory.setVideoURI(Uri.parse(Api.absUrl(story.videoUrl)))
+                        armPrepareTimeout(story)
+                    } catch (e: Exception) {
+                        showStoryError()
+                    }
+                } else {
+                    showStoryError()
+                }
                 true
+            }
+            try {
+                // Derived faststart URL first — starts after buffering
+                // the first bytes instead of fetching the file tail.
+                vvStory.setVideoURI(Uri.parse(playableVideoUrl(Api.absUrl(story.videoUrl))))
+                armPrepareTimeout(story)
+            } catch (e: Exception) {
+                showStoryError()
+                return
             }
         } else {
             vvStory.visibility = View.GONE
@@ -431,6 +470,34 @@ class StoryViewerActivity : Activity() {
     private fun stopTimers() {
         progressRunnable?.let { handler.removeCallbacks(it) }
         autoRunnable?.let { handler.removeCallbacks(it) }
+    }
+
+    /** 15s without onPrepared means the video is stuck — show the error state. */
+    private fun armPrepareTimeout(story: StoryItem) {
+        cancelPrepareTimeout()
+        val r = Runnable {
+            if (stories.getOrNull(index)?.id == story.id && !videoPrepared) {
+                showStoryError()
+            }
+        }
+        prepareTimeoutRunnable = r
+        handler.postDelayed(r, 15_000L)
+    }
+
+    private fun cancelPrepareTimeout() {
+        prepareTimeoutRunnable?.let { handler.removeCallbacks(it) }
+        prepareTimeoutRunnable = null
+    }
+
+    /** Error state: hide the video, show "Video nahi chal paaya" + Retry. */
+    private fun showStoryError() {
+        cancelPrepareTimeout()
+        stopTimers()
+        try { vvStory.stopPlayback() } catch (e: Exception) { }
+        videoPrepared = false
+        storyLoadingBox.visibility = View.GONE
+        vvStory.visibility = View.GONE
+        storyErrorBox.visibility = View.VISIBLE
     }
 
     /** Stop a playing video story (no-op for photos). */

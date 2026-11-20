@@ -43,7 +43,8 @@ class FullscreenMediaActivity : Activity() {
                 val mc = MediaController(this)
                 mc.setAnchorView(vv)
                 vv.setMediaController(mc)
-                vv.setVideoPath(abs)
+                // Listeners BEFORE the path is set (v3.4) so a fast
+                // prepare/error cannot be missed.
                 vv.setOnPreparedListener { mp ->
                     hint.visibility = View.GONE
                     vv.start()
@@ -53,6 +54,7 @@ class FullscreenMediaActivity : Activity() {
                     finish()
                     true
                 }
+                vv.setVideoPath(playableVideoUrl(abs))
                 vv.setOnClickListener {
                     if (vv.isPlaying) vv.pause() else vv.start()
                 }

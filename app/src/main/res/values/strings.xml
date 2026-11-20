@@ -64,6 +64,9 @@
     <string name="blocked_users">Blocked users</string>
     <string name="blocked_dm_notice">Blocked — you can\'t message this user</string>
     <string name="blocked_by_user">You are blocked by this user</string>
+    <string name="story_loading">Loading…</string>
+    <string name="story_video_failed">Video nahi chal paaya</string>
+    <string name="retry">Retry</string>
     <string name="cancel">Cancel</string>
     <string name="pick_photo">Choose a Photo</string>
     <string name="story_too_long">Story 59 second se zyada ki nahi ho sakti</string>

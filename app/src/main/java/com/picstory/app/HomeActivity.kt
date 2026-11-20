@@ -118,7 +118,7 @@ class HomeActivity : Activity() {
                     vvVideo.visibility = View.VISIBLE
                     tvPlayIcon.visibility = View.VISIBLE
                     try {
-                        vvVideo.setVideoURI(android.net.Uri.parse(Api.absUrl(post.videoUrl)))
+                        vvVideo.setVideoURI(android.net.Uri.parse(playableVideoUrl(Api.absUrl(post.videoUrl))))
                     } catch (e: Exception) {
                         tvPlayIcon.visibility = View.GONE
                     }

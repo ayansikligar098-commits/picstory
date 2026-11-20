@@ -2,7 +2,9 @@
 """PicStory backend E2E test — runs against http://127.0.0.1:8000."""
 import io
 import json
+import os
 import sqlite3
+import subprocess
 import sys
 import urllib.request
 import urllib.error
@@ -23,7 +25,7 @@ def check(name, cond, extra=""):
         print(f"  FAIL {name} {extra}")
 
 
-def call(method, path, token=None, body=None, raw=None, headers=None):
+def call(method, path, token=None, body=None, raw=None, headers=None, timeout=15):
     url = BASE + path
     data = None
     hdrs = {"Content-Type": "application/json"}
@@ -38,7 +40,7 @@ def call(method, path, token=None, body=None, raw=None, headers=None):
         hdrs["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, json.loads(r.read() or b"{}")
     except urllib.error.HTTPError as e:
         try:
@@ -61,6 +63,30 @@ def upload_png(token):
            f"\r\n--{boundary}--\r\n".encode()
     return call("POST", "/api/upload", token=token, raw=body,
                 headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+
+
+def moov_offsets(data: bytes):
+    """Byte offsets of the moov (index) and mdat (media) atoms. Faststart
+    means moov precedes mdat; a phone-recorded file has moov at the end."""
+    return data.find(b"moov"), data.find(b"mdat")
+
+
+def fetch_bytes(url):
+    """GET a URL (absolute or BASE-relative) and return raw bytes."""
+    full = url if url.startswith("http") else BASE + url
+    with urllib.request.urlopen(full, timeout=30) as r:
+        return r.read()
+
+
+def upload_video(token, data, filename="test.mp4"):
+    boundary = "----testboundary1234"
+    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; "
+            f"filename=\"{filename}\"\r\nContent-Type: video/mp4\r\n\r\n").encode() + data + \
+           f"\r\n--{boundary}--\r\n".encode()
+    # Generous timeout: a Cloudinary eager transcode takes a few seconds.
+    return call("POST", "/api/upload?kind=video", token=token, raw=body,
+                headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+                timeout=120)
 
 
 def main():
@@ -149,6 +175,45 @@ def main():
     s, badup = call("POST", "/api/upload", token=token_a, raw=b"hello",
                     headers={"Content-Type": "text/plain"})
     check("non-image upload rejected", s in (400, 422), f"{s}")
+
+    print("== video upload faststart (v3.4) ==")
+    # A phone-recorded MP4 has its moov index atom at the END of the file;
+    # Android VideoView then stalls on a black screen. The upload must
+    # return a faststart file (moov BEFORE mdat). Generate the fixture
+    # with ffmpeg WITHOUT -movflags faststart, so moov really is at the end.
+    fixture = "/tmp/v34_moov_end.mp4"
+    gen = subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+         "-i", "color=c=blue:s=320x568:d=2",
+         "-c:v", "libx264", "-pix_fmt", "yuv420p", fixture],
+        timeout=60)
+    check("moov-at-end fixture generated", gen.returncode == 0
+          and os.path.exists(fixture), f"rc={gen.returncode}")
+    with open(fixture, "rb") as f:
+        fixture_bytes = f.read()
+    f_moov, f_mdat = moov_offsets(fixture_bytes)
+    check("fixture really is moov-at-end (moov after mdat)",
+          f_moov > 0 and f_mdat > 0 and f_moov > f_mdat,
+          f"moov={f_moov} mdat={f_mdat}")
+    s, vup = upload_video(token_a, fixture_bytes)
+    check("video upload", s == 200 and vup.get("url", "").endswith(".mp4"),
+          f"{s} {vup}")
+    vid_url = vup.get("url", "")
+    served = fetch_bytes(vid_url) if vid_url else b""
+    s_moov, s_mdat = moov_offsets(served)
+    check("uploaded video is faststart (moov before mdat)",
+          s_moov > 0 and s_mdat > 0 and s_moov < s_mdat,
+          f"moov={s_moov} mdat={s_mdat} url={vid_url}")
+    s, vst = call("POST", "/api/stories", token=token_a,
+                  body={"video_url": vid_url})
+    check("story created from faststart upload (kind video, URL stored)",
+          s == 200 and vst.get("kind") == "video"
+          and vst.get("video_url") == vid_url, f"{s} {vst}")
+    # Clean up immediately: later story tests assume ayan has exactly
+    # one story (the photo story created in the stories section).
+    s, vst_del = call("DELETE", f"/api/stories/{vst.get('id')}", token=token_a)
+    check("faststart story cleaned up (deleted)",
+          s == 200, f"{s} {vst_del}")
 
     print("== photo posts + feed ==")
     s, post1 = call("POST", "/api/posts", token=token_p,

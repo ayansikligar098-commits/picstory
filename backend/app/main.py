@@ -710,12 +710,47 @@ def _cloudinary_configured() -> bool:
     )
 
 
-def _upload_to_cloudinary(data: bytes, ext: str) -> str:
+def _faststart_local(path) -> None:
+    """Best-effort faststart remux of a local video file (v3.4): a
+    stream-copy with -movflags +faststart moves the moov atom before
+    mdat, so Android VideoView can start after buffering the first bytes
+    instead of fetching the file tail. Never raises — a failure just
+    leaves the original file in place. Only runs when ffmpeg is on PATH
+    (dev VM); Render's python:3.12-slim image has no ffmpeg, where the
+    Cloudinary eager step covers this instead."""
+    import shutil
+    import subprocess
+
+    if shutil.which("ffmpeg") is None:
+        return
+    tmp = path.with_name(path.stem + ".faststart" + path.suffix)
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-i", str(path),
+             "-c", "copy", "-movflags", "+faststart", str(tmp)],
+            timeout=120, check=True,
+        )
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+
+
+def _upload_to_cloudinary(data: bytes, ext: str, kind: str = "") -> str:
     """Upload bytes to Cloudinary (folder "picstory") and return the secure
     URL. resource_type="auto" covers images, video and audio. The SDK is
     imported lazily so the local fallback never depends on it. The API
     secret is used only by cloudinary.config() and is never logged or
-    returned."""
+    returned.
+    v3.4: video uploads request an eager transformation (720p, auto
+    quality, mp4) so the stored file is a faststart re-encode whose moov
+    atom precedes mdat. The eager derived secure_url is returned when
+    present; if eager is missing, or the eager upload itself fails, the
+    upload is retried plain and the raw secure_url is returned — an
+    upload NEVER fails because of the eager step."""
     import cloudinary
     import cloudinary.uploader
 
@@ -733,11 +768,27 @@ def _upload_to_cloudinary(data: bytes, ext: str) -> str:
         tmp.write(data)
         tmp_path = tmp.name
     try:
-        result = cloudinary.uploader.upload(
-            tmp_path, folder="picstory", resource_type="auto",
-        )
+        kwargs: dict = {}
+        if kind == "video":
+            kwargs["eager"] = [{"width": 720, "quality": "auto",
+                                "fetch_format": "mp4"}]
+        try:
+            result = cloudinary.uploader.upload(
+                tmp_path, folder="picstory", resource_type="auto", **kwargs,
+            )
+        except Exception:
+            if not kwargs:
+                raise
+            # Eager must never sink an upload: retry plain.
+            result = cloudinary.uploader.upload(
+                tmp_path, folder="picstory", resource_type="auto",
+            )
     finally:
         os.unlink(tmp_path)
+    for item in result.get("eager") or []:
+        eager_url = item.get("secure_url") or item.get("url")
+        if eager_url:
+            return eager_url
     url = result.get("secure_url") or result.get("url")
     if not url:
         raise RuntimeError("Cloudinary upload returned no URL")
@@ -782,13 +833,18 @@ async def upload(
         # never silently fall back to local disk, which would split media
         # across two stores and lose the file on the next restart anyway.
         try:
-            return {"url": _upload_to_cloudinary(data, ext)}
+            return {"url": _upload_to_cloudinary(data, ext, kind)}
         except Exception:
             raise HTTPException(
                 status_code=502, detail="Media upload failed, please try again"
             )
     name = f"{uuid.uuid4().hex}.{ext}"
-    (STORAGE_DIR / name).write_bytes(data)
+    path = STORAGE_DIR / name
+    path.write_bytes(data)
+    if kind == "video":
+        # Local disk has no Cloudinary eager step: remux with ffmpeg so
+        # the file is faststart (moov before mdat). Best-effort only.
+        _faststart_local(path)
     return {"url": f"/media/{name}"}
 
 
