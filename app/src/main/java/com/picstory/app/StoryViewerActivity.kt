@@ -19,6 +19,7 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.VideoView
+import okhttp3.Request
 import org.json.JSONObject
 
 /**
@@ -67,6 +68,16 @@ class StoryViewerActivity : Activity() {
     // error state with Retry — never a permanent silent black screen.
     private var triedRaw = false
     private var prepareTimeoutRunnable: Runnable? = null
+    // v4.0: download-first playback. A video that is not cached yet is
+    // downloaded to the app cache (with a % shown) and only then played
+    // from the local file — VideoView's opaque prepare step never gets
+    // a chance to stall on a half-generated Cloudinary transcode.
+    // downloadGen invalidates a download started for a story the user
+    // has already swiped away from, so a late callback can never play
+    // the wrong story. The viewer uses its own .v.tmp file so it can
+    // never corrupt HomeActivity's prefetch of the same story.
+    private var downloadGen = 0
+    private lateinit var tvStoryLoadingText: TextView
     // v3.7: a visible beat between stories. Two video stories posted
     // at different times played back-to-back with no visible cut, so
     // they felt like one long clip. On auto-advance (timer or video
@@ -105,6 +116,7 @@ class StoryViewerActivity : Activity() {
         ownStoryBottomBar = findViewById(R.id.ownStoryBottomBar)
         btnDeleteStoryBottom = findViewById(R.id.btnDeleteStoryBottom)
         storyLoadingBox = findViewById(R.id.storyLoadingBox)
+        tvStoryLoadingText = findViewById(R.id.tvStoryLoadingText)
         storyErrorBox = findViewById(R.id.storyErrorBox)
         findViewById<Button>(R.id.btnRetryStory).setOnClickListener { show(index) }
 
@@ -224,6 +236,9 @@ class StoryViewerActivity : Activity() {
             return
         }
         index = i
+        // v4.0: a download started for the previous story is stale now —
+        // its late callback must never play into this story.
+        downloadGen++
         // Auto-advance (timer / video end) gets the inter-story beat;
         // taps and the first story start at once.
         beatUntilMs = if (fromAuto) SystemClock.uptimeMillis() + BEAT_MS else 0L
@@ -306,23 +321,30 @@ class StoryViewerActivity : Activity() {
                 }
                 true
             }
-            try {
-                // v3.9: play from the local cache when the video was
-                // prefetched (HomeActivity downloads the derived file
-                // in the background) — local playback starts at once,
-                // no network buffering at all. Otherwise stream the
-                // derived faststart URL — it starts after buffering
-                // the first bytes instead of fetching the file tail.
-                val localFile = java.io.File(cacheDir, "story_${story.id}.mp4")
-                val playUri = if (localFile.exists() && localFile.length() > 0)
-                    Uri.fromFile(localFile)
-                else
-                    Uri.parse(playableVideoUrl(Api.absUrl(story.videoUrl)))
-                vvStory.setVideoURI(playUri)
-                armPrepareTimeout(story)
-            } catch (e: Exception) {
-                showStoryError()
-                return
+            // v3.9: play from the local cache when the video was
+            // prefetched (HomeActivity downloads the derived file in
+            // the background) — local playback starts at once, no
+            // network buffering at all.
+            // v4.0: when nothing is cached yet, DOWNLOAD FIRST (with a
+            // % shown) and only then play the local file. Streaming
+            // straight into VideoView was the failure: its prepare step
+            // stalls on a Cloudinary transcode that is still generating
+            // and gives up after 30s, and the raw-URL retry stalls the
+            // same way — the user saw "Loading…" forever. A download
+            // waits as long as the transcode needs (300s read timeout)
+            // and then local playback is near-instant. If the download
+            // itself fails, fall back to the old streaming path.
+            val localFile = java.io.File(cacheDir, "story_${story.id}.mp4")
+            if (localFile.exists() && localFile.length() > 0) {
+                try {
+                    vvStory.setVideoURI(Uri.fromFile(localFile))
+                    armPrepareTimeout(story)
+                } catch (e: Exception) {
+                    showStoryError()
+                    return
+                }
+            } else {
+                downloadAndPlay(story)
             }
         } else {
             vvStory.visibility = View.GONE
@@ -579,6 +601,90 @@ class StoryViewerActivity : Activity() {
         }
         delayedStartRunnable = r
         handler.postDelayed(r, delay)
+    }
+
+    /**
+     * v4.0: download-first playback. Downloads the derived video to the
+     * app cache (own .v.tmp file, renamed only when complete) showing a
+     * live % in the loading box, then plays from the local file. Uses
+     * the long-download client so a Cloudinary transcode that is still
+     * generating cannot kill the transfer. If the download fails, falls
+     * back to the old streaming path instead of failing outright.
+     * Guarded by generation + story id: a download for a story the user
+     * has swiped away from can never start playback for the new story.
+     */
+    private fun downloadAndPlay(story: StoryItem) {
+        val gen = ++downloadGen
+        val url = playableVideoUrl(Api.absUrl(story.videoUrl))
+        storyLoadingBox.visibility = View.VISIBLE
+        tvStoryLoadingText.text = "Downloading…"
+        Thread {
+            val dest = java.io.File(cacheDir, "story_${story.id}.mp4")
+            val tmp = java.io.File(cacheDir, "story_${story.id}.v.tmp")
+            var ok = false
+            try {
+                if (dest.exists() && dest.length() > 0) {
+                    ok = true
+                } else {
+                    val req = Request.Builder().url(url).build()
+                    Api.downloadHttp.newCall(req).execute().use { resp ->
+                        if (resp.isSuccessful) {
+                            val body = resp.body
+                            if (body != null) {
+                                val total = body.contentLength()
+                                var done = 0L
+                                val input = body.byteStream()
+                                tmp.outputStream().use { out ->
+                                    val buf = ByteArray(64 * 1024)
+                                    while (true) {
+                                        val n = input.read(buf)
+                                        if (n < 0) break
+                                        out.write(buf, 0, n)
+                                        done += n
+                                        if (total > 0) {
+                                            val pct = (done * 100 / total).toInt().coerceIn(0, 100)
+                                            runOnUiThread {
+                                                if (gen == downloadGen &&
+                                                    stories.getOrNull(index)?.id == story.id) {
+                                                    tvStoryLoadingText.text = "Downloading… $pct%"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (tmp.exists() && tmp.length() > 0) {
+                        if (!dest.exists()) tmp.renameTo(dest) else tmp.delete()
+                        ok = dest.exists() && dest.length() > 0
+                    }
+                }
+            } catch (e: Exception) {
+                ok = dest.exists() && dest.length() > 0
+            }
+            runOnUiThread {
+                if (gen != downloadGen) return@runOnUiThread
+                if (stories.getOrNull(index)?.id != story.id) return@runOnUiThread
+                if (ok) {
+                    try {
+                        vvStory.setVideoURI(Uri.fromFile(dest))
+                        armPrepareTimeout(story)
+                    } catch (e: Exception) {
+                        showStoryError()
+                    }
+                } else {
+                    // Download failed: fall back to streaming (v3.9 path).
+                    tvStoryLoadingText.text = getString(R.string.story_loading)
+                    try {
+                        vvStory.setVideoURI(Uri.parse(url))
+                        armPrepareTimeout(story)
+                    } catch (e: Exception) {
+                        showStoryError()
+                    }
+                }
+            }
+        }.start()
     }
 
     /** 30s without onPrepared means the video is stuck — retry the raw

@@ -34,6 +34,20 @@ object Api {
     val http: OkHttpClient get() = client
 
     /**
+     * Long-download client (v4.0): story video downloads must survive
+     * Cloudinary's first-request transcode, which can take minutes
+     * before the first byte arrives. The 300s read timeout is per
+     * stall, not total — a download that keeps receiving data never
+     * times out. Used by HomeActivity prefetch and the story viewer's
+     * download-first playback; normal API calls keep using [client].
+     */
+    val downloadHttp: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(300, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .build()
+
+    /**
      * Set once from MainActivity / HomeActivity onCreate: an application
      * context (never an Activity, so nothing leaks) used only to route
      * back to the login screen when the saved session is dead.

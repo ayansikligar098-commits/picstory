@@ -539,6 +539,13 @@ class HomeActivity : Activity() {
      * storage — truly instant, no network buffering at all. Best-effort:
      * any failure is silently ignored, playback still works, just
      * slower on first play. Capped at 4 videos (mobile data).
+     *
+     * v4.0: prefetch in PARALLEL — one thread per video story. The
+     * sequential loop meant one slow video (Cloudinary still
+     * transcoding it) blocked every story behind it, so the story the
+     * user actually opened often had no cached file even after waiting
+     * on Home. Own stories come first in the list, so they still go
+     * first. The viewer (v4.0) also downloads on open as a backstop.
      */
     private fun warmUpStoryVideos(groups: List<StoryGroup>) {
         Thread {
@@ -559,13 +566,18 @@ class HomeActivity : Activity() {
                     for (s in g.stories) {
                         if (warmed >= 4) return@Thread
                         if (s.videoUrl.isEmpty()) continue
-                        val abs = Api.absUrl(s.videoUrl)
-                        // Poster transform first (fast, small) so the
-                        // viewer shows a frame instantly.
-                        posterImageUrl(abs)?.let { warmUrl(it) }
-                        // Then the playable video to local cache.
-                        prefetchVideo(s.id, playableVideoUrl(abs))
                         warmed++
+                        val storyId = s.id
+                        val abs = Api.absUrl(s.videoUrl)
+                        Thread {
+                            try {
+                                // Poster transform first (fast, small) so the
+                                // viewer shows a frame instantly.
+                                posterImageUrl(abs)?.let { warmUrl(it) }
+                                // Then the playable video to local cache.
+                                prefetchVideo(storyId, playableVideoUrl(abs))
+                            } catch (e: Exception) { }
+                        }.start()
                     }
                 }
             } catch (e: Exception) {
@@ -586,6 +598,10 @@ class HomeActivity : Activity() {
      * Written to a .tmp file and renamed only when fully downloaded, so
      * the viewer never picks up a half-finished file. The derived file
      * is small (720p, auto quality — ~1MB for a 12s clip).
+     * v4.0: uses the long-download client (300s read timeout) so a
+     * Cloudinary first-request transcode cannot kill the download, and
+     * never overwrites a complete file the viewer may have just
+     * downloaded for the same story.
      */
     private fun prefetchVideo(storyId: Int, url: String) {
         try {
@@ -593,12 +609,14 @@ class HomeActivity : Activity() {
             if (dest.exists() && dest.length() > 0) return
             val tmp = java.io.File(cacheDir, "story_$storyId.tmp")
             val req = Request.Builder().url(url).build()
-            Api.http.newCall(req).execute().use { resp ->
+            Api.downloadHttp.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return
                 val body = resp.body ?: return
                 tmp.outputStream().use { out -> body.byteStream().copyTo(out) }
             }
-            tmp.renameTo(dest)
+            if (tmp.exists() && tmp.length() > 0) {
+                if (!dest.exists()) tmp.renameTo(dest) else tmp.delete()
+            }
         } catch (e: Exception) {
         }
     }
