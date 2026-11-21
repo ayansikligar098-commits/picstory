@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.View
 import android.view.MotionEvent
 import android.view.inputmethod.InputMethodManager
@@ -66,6 +67,15 @@ class StoryViewerActivity : Activity() {
     // error state with Retry — never a permanent silent black screen.
     private var triedRaw = false
     private var prepareTimeoutRunnable: Runnable? = null
+    // v3.7: a visible beat between stories. Two video stories posted
+    // at different times played back-to-back with no visible cut, so
+    // they felt like one long clip. On auto-advance (timer or video
+    // end) the next story's still frame (poster/photo) shows for
+    // 600ms before it starts moving — the cut is unmistakable.
+    // Taps and the first story start at once, no beat.
+    private val BEAT_MS = 600L
+    private var beatUntilMs = 0L
+    private var delayedStartRunnable: Runnable? = null
     private lateinit var storyLoadingBox: LinearLayout
     private lateinit var storyErrorBox: LinearLayout
 
@@ -204,7 +214,7 @@ class StoryViewerActivity : Activity() {
         }
     }
 
-    private fun show(i: Int) {
+    private fun show(i: Int, fromAuto: Boolean = false) {
         if (i < 0) {
             finish()
             return
@@ -214,6 +224,9 @@ class StoryViewerActivity : Activity() {
             return
         }
         index = i
+        // Auto-advance (timer / video end) gets the inter-story beat;
+        // taps and the first story start at once.
+        beatUntilMs = if (fromAuto) SystemClock.uptimeMillis() + BEAT_MS else 0L
         val story = stories[i]
         stopTimers()
         stopStoryVideo()
@@ -270,10 +283,10 @@ class StoryViewerActivity : Activity() {
                 ivStory.visibility = View.GONE
                 videoPrepared = true
                 videoDurationMs = mp.duration.toLong().coerceIn(1000L, 60_000L)
-                startTimers()
+                startTimersAfterBeat(story)
             }
             vvStory.setOnCompletionListener {
-                if (stories.getOrNull(index)?.id == story.id) show(index + 1)
+                if (stories.getOrNull(index)?.id == story.id) show(index + 1, fromAuto = true)
             }
             vvStory.setOnErrorListener { _, _, _ ->
                 if (stories.getOrNull(index)?.id != story.id) return@setOnErrorListener true
@@ -310,7 +323,7 @@ class StoryViewerActivity : Activity() {
             } else {
                 ivStory.setImageBitmap(null)
             }
-            startTimers()
+            startTimersAfterBeat(story)
         }
         // Mark viewed (only for live stories, not highlights).
         if (highlightId == 0) {
@@ -525,7 +538,7 @@ class StoryViewerActivity : Activity() {
         }
         progressRunnable = tick
         handler.postDelayed(tick, durationMs / 50)
-        val auto = Runnable { show(index + 1) }
+        val auto = Runnable { show(index + 1, fromAuto = true) }
         autoRunnable = auto
         handler.postDelayed(auto, durationMs)
     }
@@ -533,6 +546,30 @@ class StoryViewerActivity : Activity() {
     private fun stopTimers() {
         progressRunnable?.let { handler.removeCallbacks(it) }
         autoRunnable?.let { handler.removeCallbacks(it) }
+        delayedStartRunnable?.let { handler.removeCallbacks(it) }
+        delayedStartRunnable = null
+    }
+
+    /**
+     * Start the timers (and the video) after the inter-story beat, if
+     * one is armed. The still frame is already on screen, so the beat
+     * reads as a clear cut to a new story, not a stall. Guarded by
+     * story id: a tap away during the beat must not start the old
+     * story's timers.
+     */
+    private fun startTimersAfterBeat(story: StoryItem) {
+        delayedStartRunnable?.let { handler.removeCallbacks(it) }
+        val delay = (beatUntilMs - SystemClock.uptimeMillis()).coerceAtLeast(0L)
+        if (delay == 0L) {
+            startTimers()
+            return
+        }
+        val r = Runnable {
+            delayedStartRunnable = null
+            if (stories.getOrNull(index)?.id == story.id) startTimers()
+        }
+        delayedStartRunnable = r
+        handler.postDelayed(r, delay)
     }
 
     /** 15s without onPrepared means the video is stuck — show the error state. */

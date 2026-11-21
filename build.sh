@@ -54,7 +54,7 @@ TASK="${1:-assembleDebug}"
   $PROXY_OPTS \
   -cp "$HOME/workspace/android/gradle-8.7/lib/gradle-launcher-8.7.jar" \
   -javaagent:"$HOME/workspace/android/gradle-8.7/lib/agents/gradle-instrumentation-agent-8.7.jar" \
-  org.gradle.launcher.GradleMain --no-daemon --offline "$TASK"
+  org.gradle.launcher.GradleMain --no-daemon --offline -Pkotlin.compiler.execution.strategy=in-process "$TASK"
 
 if [ "$TASK" = "assembleDebug" ]; then
   APK="app/build/outputs/apk/debug/app-debug.apk"
