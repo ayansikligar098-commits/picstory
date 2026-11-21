@@ -191,11 +191,14 @@ class DmChatActivity : Activity() {
             override fun run() {
                 loadThread()
                 loadTyping()
-                pollHandler.postDelayed(this, 5_000)
+                // v4.1: poll every 3s instead of 5s — with the faster
+                // backend (batched queries) a new DM now shows in ~1-4s
+                // instead of ~4-7s.
+                pollHandler.postDelayed(this, 3_000)
             }
         }
         pollRunnable = r
-        pollHandler.postDelayed(r, 5_000)
+        pollHandler.postDelayed(r, 3_000)
         val pr = object : Runnable {
             override fun run() {
                 loadPresence()

@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, text
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
 from .db import Base, engine, get_db
@@ -202,9 +202,13 @@ def get_current_user(
     if not user:
         raise HTTPException(status_code=401, detail="Account not found")
     # Presence: every authenticated request proves the user is active now.
-    # Cheap at this scale; the DM/chat pollers keep an open screen "online".
-    user.last_seen_at = now_naive()
-    db.commit()
+    # Throttled to once per 30s (v4.1): writing + committing last_seen_at
+    # on EVERY request was a write transaction per read, and the online
+    # window is 120s, so 30s granularity keeps presence accurate.
+    if (user.last_seen_at is None
+            or (now_naive() - user.last_seen_at).total_seconds() > 30):
+        user.last_seen_at = now_naive()
+        db.commit()
     return user
 
 
@@ -224,46 +228,75 @@ def counts(db: Session, user_id: int):
     return post_count, followers, following
 
 
+def counts_many(db: Session, user_ids) -> dict:
+    """(post_count, followers, following) per user id — 3 GROUP BY queries
+    instead of 3 per user (v4.1: per-user counts() was the N+1 that made
+    every list endpoint take seconds)."""
+    ids = list({int(i) for i in user_ids})
+    if not ids:
+        return {}
+    posts = dict(
+        db.query(Post.user_id, func.count())
+        .filter(Post.user_id.in_(ids)).group_by(Post.user_id).all())
+    followers = dict(
+        db.query(Follow.following_id, func.count())
+        .filter(Follow.following_id.in_(ids))
+        .group_by(Follow.following_id).all())
+    following = dict(
+        db.query(Follow.follower_id, func.count())
+        .filter(Follow.follower_id.in_(ids))
+        .group_by(Follow.follower_id).all())
+    return {uid: (posts.get(uid, 0), followers.get(uid, 0),
+                  following.get(uid, 0)) for uid in ids}
+
+
+def user_out_many(db: Session, users, me_id: int) -> dict:
+    """user_out for many users — same dicts, ~6 queries total instead of
+    6 per user. Returns {user_id: user dict}."""
+    users = [u for u in users if u is not None]
+    if not users:
+        return {}
+    ids = [u.id for u in users]
+    cm = counts_many(db, ids)
+    # Follow/block lookups only matter for other users (self is always
+    # False, as in the original user_out) — skip them for a self-only list.
+    others = [uid for uid in ids if uid != me_id]
+    followed_ids = {r[0] for r in db.query(Follow.following_id).filter(
+        Follow.follower_id == me_id, Follow.following_id.in_(others)).all()} if others else set()
+    blocked_ids = {r[0] for r in db.query(Block.blocked_id).filter(
+        Block.blocker_id == me_id, Block.blocked_id.in_(others)).all()} if others else set()
+    blocked_me_ids = {r[0] for r in db.query(Block.blocker_id).filter(
+        Block.blocked_id == me_id, Block.blocker_id.in_(others)).all()} if others else set()
+    out = {}
+    for u in users:
+        post_count, followers, following = cm.get(u.id, (0, 0, 0))
+        followed = (u.id in followed_ids) if u.id != me_id else False
+        blocked = (u.id in blocked_ids) if u.id != me_id else False
+        blocked_me = (u.id in blocked_me_ids) if u.id != me_id else False
+        # v3.3: a block in either direction hides online activity both ways.
+        blocked_either = blocked or blocked_me
+        out[u.id] = {
+            "id": u.id,
+            "username": u.username,
+            "display_name": u.display_name,
+            "bio": u.bio or "",
+            "avatar_url": u.avatar_url or "",
+            "music_url": u.music_url or "",
+            "post_count": post_count,
+            "followers_count": followers,
+            "following_count": following,
+            "followed_by_me": followed,
+            "blocked_by_me": blocked,
+            "blocked_me": blocked_me,
+            "online": is_online(u) and not blocked_either,
+            "last_seen_at": None if blocked_either else iso(u.last_seen_at),
+            "created_at": iso(u.created_at),
+        }
+    return out
+
+
 def user_out(u: User, me_id: int, db: Session) -> dict:
-    post_count, followers, following = counts(db, u.id)
-    followed = (
-        db.query(Follow)
-        .filter(Follow.follower_id == me_id, Follow.following_id == u.id)
-        .first()
-        is not None
-    ) if me_id != u.id else False
-    blocked = (
-        db.query(Block)
-        .filter(Block.blocker_id == me_id, Block.blocked_id == u.id)
-        .first()
-        is not None
-    ) if me_id != u.id else False
-    # v3.3: did the viewed user block me?
-    blocked_me = (
-        db.query(Block)
-        .filter(Block.blocker_id == u.id, Block.blocked_id == me_id)
-        .first()
-        is not None
-    ) if me_id != u.id else False
-    # v3.3: a block in either direction hides online activity both ways.
-    blocked_either = blocked or blocked_me
-    return {
-        "id": u.id,
-        "username": u.username,
-        "display_name": u.display_name,
-        "bio": u.bio or "",
-        "avatar_url": u.avatar_url or "",
-        "music_url": u.music_url or "",
-        "post_count": post_count,
-        "followers_count": followers,
-        "following_count": following,
-        "followed_by_me": followed,
-        "blocked_by_me": blocked,
-        "blocked_me": blocked_me,
-        "online": is_online(u) and not blocked_either,
-        "last_seen_at": None if blocked_either else iso(u.last_seen_at),
-        "created_at": iso(u.created_at),
-    }
+    return user_out_many(db, [u], me_id)[u.id]
 
 
 def my_blocked_ids(db: Session, me_id: int) -> set:
@@ -311,34 +344,44 @@ def notify(db: Session, recipient_id: int, actor: User, ntype: str,
         db.rollback()
 
 
-def notification_out(db: Session, n: Notification, me_id: int) -> dict:
-    actor = db.query(User).get(n.actor_id)
-    return {
+def notification_out_many(db: Session, rows, me_id: int) -> list:
+    """notification_out for many rows — same dicts, actors fetched once."""
+    if not rows:
+        return []
+    actor_ids = list({n.actor_id for n in rows})
+    actors = {u.id: u for u in
+              db.query(User).filter(User.id.in_(actor_ids)).all()}
+    actor_out = user_out_many(db, list(actors.values()), me_id)
+    return [{
         "id": n.id,
         "type": n.type,
         "ref_id": n.ref_id,
         "body": n.body or "",
         "is_read": bool(n.is_read),
         "created_at": iso(n.created_at),
-        "actor": user_out(actor, me_id, db) if actor else None,
-    }
+        "actor": actor_out.get(n.actor_id),
+    } for n in rows]
 
 
-def story_out(s: Story, me_id: int, db: Session) -> dict:
-    viewed = (
-        db.query(StoryView)
-        .filter(StoryView.story_id == s.id, StoryView.viewer_id == me_id)
-        .first()
-        is not None
-    )
-    like_count = db.query(StoryLike).filter(StoryLike.story_id == s.id).count()
-    liked = (
-        db.query(StoryLike)
-        .filter(StoryLike.story_id == s.id, StoryLike.user_id == me_id)
-        .first()
-        is not None
-    )
-    return {
+def notification_out(db: Session, n: Notification, me_id: int) -> dict:
+    return notification_out_many(db, [n], me_id)[0]
+
+
+def story_out_many(db: Session, stories, me_id: int) -> list:
+    """story_out for many stories — same dicts, 3 queries total instead of
+    3 per story."""
+    if not stories:
+        return []
+    sids = [s.id for s in stories]
+    viewed_ids = {r[0] for r in db.query(StoryView.story_id).filter(
+        StoryView.story_id.in_(sids), StoryView.viewer_id == me_id).all()}
+    like_counts = dict(
+        db.query(StoryLike.story_id, func.count())
+        .filter(StoryLike.story_id.in_(sids))
+        .group_by(StoryLike.story_id).all())
+    liked_ids = {r[0] for r in db.query(StoryLike.story_id).filter(
+        StoryLike.story_id.in_(sids), StoryLike.user_id == me_id).all()}
+    return [{
         "id": s.id,
         "user_id": s.user_id,
         "kind": s.kind,
@@ -346,36 +389,54 @@ def story_out(s: Story, me_id: int, db: Session) -> dict:
         "image_url": s.image_url or "",
         "video_url": s.video_url or "",
         "bg_color": s.bg_color or "#5B21B6",
-        "viewed_by_me": viewed,
-        "like_count": like_count,
-        "liked_by_me": liked,
+        "viewed_by_me": s.id in viewed_ids,
+        "like_count": like_counts.get(s.id, 0),
+        "liked_by_me": s.id in liked_ids,
         "created_at": iso(s.created_at),
         "expires_at": iso(s.expires_at),
-    }
+    } for s in stories]
+
+
+def story_out(s: Story, me_id: int, db: Session) -> dict:
+    return story_out_many(db, [s], me_id)[0]
+
+
+def post_out_many(db: Session, posts, me_id: int) -> list:
+    """post_out for many posts — same dicts, ~10 queries total instead of
+    ~9 per post."""
+    if not posts:
+        return []
+    author_ids = list({p.user_id for p in posts})
+    authors = {u.id: u for u in
+               db.query(User).filter(User.id.in_(author_ids)).all()}
+    author_out = user_out_many(db, list(authors.values()), me_id)
+    pids = [p.id for p in posts]
+    like_counts = dict(
+        db.query(PostLike.post_id, func.count())
+        .filter(PostLike.post_id.in_(pids))
+        .group_by(PostLike.post_id).all())
+    comment_counts = dict(
+        db.query(PostComment.post_id, func.count())
+        .filter(PostComment.post_id.in_(pids))
+        .group_by(PostComment.post_id).all())
+    liked_ids = {r[0] for r in db.query(PostLike.post_id).filter(
+        PostLike.post_id.in_(pids), PostLike.user_id == me_id).all()}
+    return [{
+        "id": p.id,
+        "user_id": p.user_id,
+        "author": author_out.get(p.user_id),
+        "caption": p.caption or "",
+        "image_url": p.image_url or "",
+        "video_url": p.video_url or "",
+        "like_count": like_counts.get(p.id, 0),
+        "comment_count": comment_counts.get(p.id, 0),
+        "liked_by_me": p.id in liked_ids,
+        "created_at": iso(p.created_at),
+    } for p in posts]
 
 
 def post_out(db: Session, post: Post, me_id: int) -> dict:
-    author = db.query(User).get(post.user_id)
-    like_count = db.query(PostLike).filter(PostLike.post_id == post.id).count()
-    comment_count = db.query(PostComment).filter(PostComment.post_id == post.id).count()
-    liked = (
-        db.query(PostLike)
-        .filter(PostLike.post_id == post.id, PostLike.user_id == me_id)
-        .first()
-        is not None
-    )
-    return {
-        "id": post.id,
-        "user_id": post.user_id,
-        "author": user_out(author, me_id, db) if author else None,
-        "caption": post.caption or "",
-        "image_url": post.image_url or "",
-        "video_url": post.video_url or "",
-        "like_count": like_count,
-        "comment_count": comment_count,
-        "liked_by_me": liked,
-        "created_at": iso(post.created_at),
-    }
+    return post_out_many(db, [post], me_id)[0]
 
 
 def highlight_out(db: Session, h: Highlight, me_id: int, with_stories: bool = False) -> dict:
@@ -868,7 +929,7 @@ def list_posts(
         .order_by(Post.created_at.desc(), Post.id.desc())
         .offset(offset).limit(limit).all()
     )
-    return [post_out(db, p, user.id) for p in posts]
+    return post_out_many(db, posts, user.id)
 
 
 @app.get("/api/explore")
@@ -885,7 +946,7 @@ def explore(
         .order_by(Post.created_at.desc(), Post.id.desc())
         .offset(offset).limit(limit).all()
     )
-    return [post_out(db, p, user.id) for p in posts]
+    return post_out_many(db, posts, user.id)
 
 
 @app.get("/api/users/{user_id}/posts")
@@ -901,7 +962,7 @@ def list_user_posts(user_id: int, db: Session = Depends(get_db),
         db.query(Post).filter(Post.user_id == user_id)
         .order_by(Post.created_at.desc(), Post.id.desc()).all()
     )
-    return [post_out(db, p, user.id) for p in posts]
+    return post_out_many(db, posts, user.id)
 
 
 @app.post("/api/posts")
@@ -1044,15 +1105,21 @@ def list_stories(db: Session = Depends(get_db), user: User = Depends(get_current
         .order_by(Story.created_at.desc())
         .all()
     )
+    # v4.1: batch the authors + story fields (one query set for the
+    # whole list) instead of ~9 queries per story.
+    author_ids = list({s.user_id for s in stories})
+    authors = {u.id: u for u in
+               db.query(User).filter(User.id.in_(author_ids)).all()}
+    author_out = user_out_many(db, list(authors.values()), user.id)
+    story_dicts = story_out_many(db, stories, user.id)
     grouped = {}
-    for s in stories:
-        author = db.query(User).get(s.user_id)
+    for s, sd in zip(stories, story_dicts):
         if s.user_id not in grouped:
             grouped[s.user_id] = {
-                "user": user_out(author, user.id, db) if author else None,
+                "user": author_out.get(s.user_id),
                 "stories": [],
             }
-        grouped[s.user_id]["stories"].append(story_out(s, user.id, db))
+        grouped[s.user_id]["stories"].append(sd)
     # Most recently active first; own stories first.
     result = sorted(
         grouped.values(),
@@ -1259,7 +1326,7 @@ def list_notifications(limit: int = Query(50, ge=1, le=100),
         .order_by(Notification.created_at.desc(), Notification.id.desc())
         .limit(limit).all()
     )
-    return [notification_out(db, n, user.id) for n in rows]
+    return notification_out_many(db, rows, user.id)
 
 
 @app.get("/api/notifications/unread-count")
@@ -1312,30 +1379,39 @@ def list_dm_conversations(db: Session = Depends(get_db),
         .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
         .all()
     )
+    # v4.1: batch the whole list (~11 queries total) instead of ~9 per
+    # conversation — last message via max(id) per conversation, unread via
+    # one GROUP BY.
+    if not convs:
+        return []
+    other_ids = [c.user2_id if c.user1_id == user.id else c.user1_id
+                 for c in convs]
+    others = {u.id: u for u in db.query(User).filter(
+        User.id.in_(list(set(other_ids)))).all()}
+    other_out = user_out_many(db, list(others.values()), user.id)
+    conv_ids = [c.id for c in convs]
+    last_ids = dict(
+        db.query(Message.conversation_id, func.max(Message.id))
+        .filter(Message.conversation_id.in_(conv_ids))
+        .group_by(Message.conversation_id).all())
+    last_msgs = {m.id: m for m in db.query(Message).filter(
+        Message.id.in_(list(last_ids.values()))).all()} if last_ids else {}
+    unread_rows = db.query(
+        Message.conversation_id, Message.sender_id, func.count()).filter(
+        Message.conversation_id.in_(conv_ids),
+        Message.read_at.is_(None)).group_by(
+        Message.conversation_id, Message.sender_id).all()
+    unread_map = {(cid, sid): n for cid, sid, n in unread_rows}
     out = []
-    for c in convs:
-        other_id = c.user2_id if c.user1_id == user.id else c.user1_id
-        other = db.query(User).get(other_id)
-        if not other:
+    for c, other_id in zip(convs, other_ids):
+        if other_id not in others:
             continue
-        last = (
-            db.query(Message)
-            .filter(Message.conversation_id == c.id)
-            .order_by(Message.id.desc())
-            .first()
-        )
-        unread = (
-            db.query(Message)
-            .filter(Message.conversation_id == c.id,
-                    Message.sender_id == other_id,
-                    Message.read_at.is_(None))
-            .count()
-        )
+        last = last_msgs.get(last_ids.get(c.id, -1))
         out.append({
-            "user": user_out(other, user.id, db),
+            "user": other_out.get(other_id),
             "last_message": last.body if last else "",
             "last_message_at": iso(last.created_at) if last else None,
-            "unread_count": unread,
+            "unread_count": unread_map.get((c.id, other_id), 0),
         })
     return out
 
