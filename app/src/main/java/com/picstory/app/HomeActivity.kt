@@ -23,6 +23,7 @@ import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
 import android.widget.VideoView
+import okhttp3.Request
 import org.json.JSONObject
 
 /**
@@ -519,8 +520,47 @@ class HomeActivity : Activity() {
                     }
                     storyGroups = list
                     buildStoryRow()
+                    warmUpStoryVideos(list)
                 }
             }
+        }
+    }
+
+    /**
+     * v3.8: warm up Cloudinary transforms in the background. The first
+     * play of a video story was slow or failed outright (Retry) because
+     * the derived faststart video (and its poster jpg) had to be
+     * generated on first request — a full re-encode takes 5–30s, longer
+     * than the player's prepare timeout. A HEAD request triggers the
+     * generation without downloading the body, so by the time the user
+     * taps a story ring the files are ready and playback starts at
+     * once. Best-effort: any failure is silently ignored, playback
+     * still works, just slower on first play. Capped at 6 videos.
+     */
+    private fun warmUpStoryVideos(groups: List<StoryGroup>) {
+        Thread {
+            try {
+                var warmed = 0
+                for (g in groups) {
+                    for (s in g.stories) {
+                        if (warmed >= 6) return@Thread
+                        if (s.videoUrl.isEmpty()) continue
+                        val abs = Api.absUrl(s.videoUrl)
+                        warmUrl(playableVideoUrl(abs))
+                        posterImageUrl(abs)?.let { warmUrl(it) }
+                        warmed++
+                    }
+                }
+            } catch (e: Exception) {
+            }
+        }.start()
+    }
+
+    private fun warmUrl(url: String) {
+        try {
+            val req = Request.Builder().url(url).head().build()
+            Api.http.newCall(req).execute().use { }
+        } catch (e: Exception) {
         }
     }
 

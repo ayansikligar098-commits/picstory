@@ -572,16 +572,28 @@ class StoryViewerActivity : Activity() {
         handler.postDelayed(r, delay)
     }
 
-    /** 15s without onPrepared means the video is stuck — show the error state. */
+    /** 30s without onPrepared means the video is stuck — retry the raw
+     *  file once (v3.8: the derived faststart file may still be
+     *  generating on first play), then show the error state. */
     private fun armPrepareTimeout(story: StoryItem) {
         cancelPrepareTimeout()
         val r = Runnable {
             if (stories.getOrNull(index)?.id == story.id && !videoPrepared) {
-                showStoryError()
+                if (!triedRaw) {
+                    triedRaw = true
+                    try {
+                        vvStory.setVideoURI(Uri.parse(Api.absUrl(story.videoUrl)))
+                        armPrepareTimeout(story)
+                    } catch (e: Exception) {
+                        showStoryError()
+                    }
+                } else {
+                    showStoryError()
+                }
             }
         }
         prepareTimeoutRunnable = r
-        handler.postDelayed(r, 15_000L)
+        handler.postDelayed(r, 30_000L)
     }
 
     private fun cancelPrepareTimeout() {
