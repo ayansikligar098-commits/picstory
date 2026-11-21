@@ -93,13 +93,14 @@
         android:orientation="vertical"
         android:padding="12dp">
 
-        <ProgressBar
-            android:id="@+id/pbStory"
-            style="?android:attr/progressBarStyleHorizontal"
+        <!-- v3.6: one segment per story, like Instagram — the bars are
+             built in code (one per story in the group); finished
+             segments are full, the current one fills, the rest empty. -->
+        <LinearLayout
+            android:id="@+id/storyProgressSegments"
             android:layout_width="match_parent"
             android:layout_height="4dp"
-            android:max="100"
-            android:progressDrawable="@drawable/story_progress" />
+            android:orientation="horizontal" />
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -152,16 +153,6 @@
             </LinearLayout>
 
             <Button
-                android:id="@+id/btnDeleteStory"
-                android:layout_width="44dp"
-                android:layout_height="44dp"
-                android:background="@android:color/transparent"
-                android:text="🗑"
-                android:textColor="@color/white"
-                android:textSize="18sp"
-                android:visibility="gone" />
-
-            <Button
                 android:id="@+id/btnClose"
                 android:layout_width="44dp"
                 android:layout_height="44dp"
@@ -170,16 +161,6 @@
                 android:textColor="@color/white"
                 android:textSize="20sp" />
         </LinearLayout>
-
-        <TextView
-            android:id="@+id/tvViewers"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text=""
-            android:textColor="@color/white"
-            android:textSize="13sp"
-            android:visibility="gone" />
     </LinearLayout>
 
     <!-- Bottom bar: like + reply (other people's stories only). -->
@@ -225,5 +206,39 @@
             android:text="➤"
             android:textColor="@color/white"
             android:textSize="18sp" />
+    </LinearLayout>
+
+    <!-- Bottom bar: my own story — viewers count above a labelled
+         Delete button (v3.6: moved down from the top header, where the
+         trash icon sat next to the close button and the viewers count
+         sat under the name). Only one bottom bar is ever visible. -->
+    <LinearLayout
+        android:id="@+id/ownStoryBottomBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="vertical"
+        android:padding="12dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tvViewers"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:clickable="true"
+            android:text=""
+            android:textColor="@color/white"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/btnDeleteStoryBottom"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/btn_delete"
+            android:text="🗑 Delete"
+            android:textColor="@color/white"
+            android:textSize="16sp" />
     </LinearLayout>
 </FrameLayout>

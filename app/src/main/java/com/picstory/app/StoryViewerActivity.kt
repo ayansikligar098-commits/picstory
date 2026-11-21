@@ -34,7 +34,10 @@ class StoryViewerActivity : Activity() {
 
     private lateinit var ivStory: ImageView
     private lateinit var vvStory: VideoView
-    private lateinit var pbStory: ProgressBar
+    // v3.6: one progress segment per story (Instagram-style) instead
+    // of a single bar — built in code, one per story in the group.
+    private lateinit var storyProgressSegments: LinearLayout
+    private val segmentBars = mutableListOf<ProgressBar>()
     private lateinit var tvStoryName: TextView
     private lateinit var tvStoryTime: TextView
     private lateinit var tvStoryAvatar: TextView
@@ -43,7 +46,8 @@ class StoryViewerActivity : Activity() {
     private lateinit var btnLike: Button
     private lateinit var etStoryComment: EditText
     private lateinit var storyBottomBar: LinearLayout
-    private lateinit var btnDeleteStory: Button
+    private lateinit var ownStoryBottomBar: LinearLayout
+    private lateinit var btnDeleteStoryBottom: Button
     private var likeBusy = false
     private var commentBusy = false
 
@@ -79,7 +83,7 @@ class StoryViewerActivity : Activity() {
         }
         ivStory = findViewById(R.id.ivStory)
         vvStory = findViewById(R.id.vvStory)
-        pbStory = findViewById(R.id.pbStory)
+        storyProgressSegments = findViewById(R.id.storyProgressSegments)
         tvStoryName = findViewById(R.id.tvStoryName)
         tvStoryTime = findViewById(R.id.tvStoryTime)
         tvStoryAvatar = findViewById(R.id.tvStoryAvatar)
@@ -88,7 +92,8 @@ class StoryViewerActivity : Activity() {
         btnLike = findViewById(R.id.btnLike)
         etStoryComment = findViewById(R.id.etStoryComment)
         storyBottomBar = findViewById(R.id.storyBottomBar)
-        btnDeleteStory = findViewById(R.id.btnDeleteStory)
+        ownStoryBottomBar = findViewById(R.id.ownStoryBottomBar)
+        btnDeleteStoryBottom = findViewById(R.id.btnDeleteStoryBottom)
         storyLoadingBox = findViewById(R.id.storyLoadingBox)
         storyErrorBox = findViewById(R.id.storyErrorBox)
         findViewById<Button>(R.id.btnRetryStory).setOnClickListener { show(index) }
@@ -117,7 +122,7 @@ class StoryViewerActivity : Activity() {
         vvStory.setOnTouchListener(mediaTouch)
         btnLike.setOnClickListener { toggleLike() }
         findViewById<Button>(R.id.btnSendStoryComment).setOnClickListener { sendStoryReply() }
-        btnDeleteStory.setOnClickListener { confirmDeleteStory() }
+        btnDeleteStoryBottom.setOnClickListener { confirmDeleteStory() }
         // Don't auto-advance while the user is typing a reply.
         etStoryComment.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) stopTimers() else startTimers()
@@ -228,9 +233,25 @@ class StoryViewerActivity : Activity() {
         // timer follows the video's own length; a photo story shows
         // for the fixed 5s. The like/reply bar and delete button are
         // the same for both.
+        buildSegments()
         if (story.videoUrl.isNotEmpty()) {
-            ivStory.visibility = View.GONE
-            vvStory.visibility = View.VISIBLE
+            // v3.6: no black screen on tap. The video player needs
+            // 1–3s to buffer over mobile data, and until v3.6 the
+            // screen sat black (plus a small spinner) for all of it.
+            // Now the video's own poster frame (a small Cloudinary
+            // jpg at 1s, same frame the video starts from) is shown
+            // in the photo view the instant the story opens, and the
+            // VideoView stays INVISIBLE until it is actually
+            // prepared — so the user sees the story at once and the
+            // video simply starts moving over its own still frame.
+            val poster = posterImageUrl(Api.absUrl(story.videoUrl))
+            if (poster != null) {
+                ivStory.visibility = View.VISIBLE
+                ImageLoader.load(poster, ivStory, 1200)
+            } else {
+                ivStory.visibility = View.GONE
+            }
+            vvStory.visibility = View.INVISIBLE
             storyErrorBox.visibility = View.GONE
             storyLoadingBox.visibility = View.VISIBLE
             videoPrepared = false
@@ -244,6 +265,9 @@ class StoryViewerActivity : Activity() {
                 cancelPrepareTimeout()
                 storyLoadingBox.visibility = View.GONE
                 storyErrorBox.visibility = View.GONE
+                // The video is ready: reveal it and drop the poster.
+                vvStory.visibility = View.VISIBLE
+                ivStory.visibility = View.GONE
                 videoPrepared = true
                 videoDurationMs = mp.duration.toLong().coerceIn(1000L, 60_000L)
                 startTimers()
@@ -305,10 +329,11 @@ class StoryViewerActivity : Activity() {
         } else {
             tvViewers.visibility = View.GONE
         }
-        // Own story: delete button, no like/reply. Someone else's story:
-        // heart like + reply box (the reply goes to them as a DM).
+        // Own story: viewers + labelled Delete at the bottom, no
+        // like/reply. Someone else's story: heart like + reply box
+        // (the reply goes to them as a DM).
         val isMine = author?.id == Prefs.myUserId
-        btnDeleteStory.visibility = if (isMine) View.VISIBLE else View.GONE
+        ownStoryBottomBar.visibility = if (isMine) View.VISIBLE else View.GONE
         storyBottomBar.visibility = if (isMine) View.GONE else View.VISIBLE
         updateLikeButton(story)
         // Timers are started by the media branch above: at once for a
@@ -429,6 +454,44 @@ class StoryViewerActivity : Activity() {
     }
 
     /**
+     * One progress segment per story (v3.6, Instagram-style): as many
+     * bars as there are stories in the group. Finished segments are
+     * full, the current one fills as it plays, the rest stay empty.
+     * Rebuilt on every show() — the group is tiny (a handful of
+     * stories) and rebuilding keeps the states trivially correct.
+     */
+    private fun buildSegments() {
+        storyProgressSegments.removeAllViews()
+        segmentBars.clear()
+        val count = stories.size.coerceAtLeast(1)
+        val gap = (2 * resources.displayMetrics.density).toInt()
+        for (i in 0 until count) {
+            val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 100
+                progress = 0
+                progressDrawable = getDrawable(R.drawable.story_progress)
+            }
+            val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
+            lp.marginStart = if (i == 0) 0 else gap
+            lp.marginEnd = if (i == count - 1) 0 else gap
+            storyProgressSegments.addView(bar, lp)
+            segmentBars.add(bar)
+        }
+        updateSegments(0)
+    }
+
+    /** Finished segments full, the current one at `currentProgress`, the rest empty. */
+    private fun updateSegments(currentProgress: Int) {
+        for (i in segmentBars.indices) {
+            segmentBars[i].progress = when {
+                i < index -> 100
+                i == index -> currentProgress
+                else -> 0
+            }
+        }
+    }
+
+    /**
      * Progress + auto-advance. The duration follows the story on screen:
      * a photo shows for the fixed 5s, a video story for its own length
      * (capped at 60s). A video story that is not prepared yet starts no
@@ -452,11 +515,11 @@ class StoryViewerActivity : Activity() {
             } catch (e: Exception) { }
         }
         progress = 0
-        pbStory.progress = 0
+        updateSegments(0)
         val tick = object : Runnable {
             override fun run() {
                 progress += 2
-                pbStory.progress = progress.coerceAtMost(100)
+                updateSegments(progress.coerceAtMost(100))
                 if (progress < 100) handler.postDelayed(this, durationMs / 50)
             }
         }
