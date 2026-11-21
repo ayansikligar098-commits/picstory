@@ -534,20 +534,37 @@ class HomeActivity : Activity() {
      * than the player's prepare timeout. A HEAD request triggers the
      * generation without downloading the body, so by the time the user
      * taps a story ring the files are ready and playback starts at
-     * once. Best-effort: any failure is silently ignored, playback
-     * still works, just slower on first play. Capped at 6 videos.
+     * once. v3.9: the playable video itself is also downloaded to the
+     * app cache (story_<id>.mp4) so the viewer can play it from local
+     * storage — truly instant, no network buffering at all. Best-effort:
+     * any failure is silently ignored, playback still works, just
+     * slower on first play. Capped at 4 videos (mobile data).
      */
     private fun warmUpStoryVideos(groups: List<StoryGroup>) {
         Thread {
             try {
+                // Drop stale cache files (stories expire after 24h) and
+                // half-finished downloads from a previous run.
+                val liveIds = groups.flatMap { it.stories.map { s -> s.id } }.toSet()
+                cacheDir.listFiles()?.forEach { f ->
+                    val name = f.name
+                    if (name.startsWith("story_") && (name.endsWith(".tmp") ||
+                        (name.endsWith(".mp4") && name.removePrefix("story_")
+                            .removeSuffix(".mp4").toIntOrNull() !in liveIds))) {
+                        try { f.delete() } catch (e: Exception) { }
+                    }
+                }
                 var warmed = 0
                 for (g in groups) {
                     for (s in g.stories) {
-                        if (warmed >= 6) return@Thread
+                        if (warmed >= 4) return@Thread
                         if (s.videoUrl.isEmpty()) continue
                         val abs = Api.absUrl(s.videoUrl)
-                        warmUrl(playableVideoUrl(abs))
+                        // Poster transform first (fast, small) so the
+                        // viewer shows a frame instantly.
                         posterImageUrl(abs)?.let { warmUrl(it) }
+                        // Then the playable video to local cache.
+                        prefetchVideo(s.id, playableVideoUrl(abs))
                         warmed++
                     }
                 }
@@ -560,6 +577,28 @@ class HomeActivity : Activity() {
         try {
             val req = Request.Builder().url(url).head().build()
             Api.http.newCall(req).execute().use { }
+        } catch (e: Exception) {
+        }
+    }
+
+    /**
+     * Download the playable (derived faststart) video to the app cache.
+     * Written to a .tmp file and renamed only when fully downloaded, so
+     * the viewer never picks up a half-finished file. The derived file
+     * is small (720p, auto quality — ~1MB for a 12s clip).
+     */
+    private fun prefetchVideo(storyId: Int, url: String) {
+        try {
+            val dest = java.io.File(cacheDir, "story_$storyId.mp4")
+            if (dest.exists() && dest.length() > 0) return
+            val tmp = java.io.File(cacheDir, "story_$storyId.tmp")
+            val req = Request.Builder().url(url).build()
+            Api.http.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return
+                val body = resp.body ?: return
+                tmp.outputStream().use { out -> body.byteStream().copyTo(out) }
+            }
+            tmp.renameTo(dest)
         } catch (e: Exception) {
         }
     }

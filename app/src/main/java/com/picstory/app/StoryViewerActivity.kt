@@ -307,9 +307,18 @@ class StoryViewerActivity : Activity() {
                 true
             }
             try {
-                // Derived faststart URL first — starts after buffering
+                // v3.9: play from the local cache when the video was
+                // prefetched (HomeActivity downloads the derived file
+                // in the background) — local playback starts at once,
+                // no network buffering at all. Otherwise stream the
+                // derived faststart URL — it starts after buffering
                 // the first bytes instead of fetching the file tail.
-                vvStory.setVideoURI(Uri.parse(playableVideoUrl(Api.absUrl(story.videoUrl))))
+                val localFile = java.io.File(cacheDir, "story_${story.id}.mp4")
+                val playUri = if (localFile.exists() && localFile.length() > 0)
+                    Uri.fromFile(localFile)
+                else
+                    Uri.parse(playableVideoUrl(Api.absUrl(story.videoUrl)))
+                vvStory.setVideoURI(playUri)
                 armPrepareTimeout(story)
             } catch (e: Exception) {
                 showStoryError()
